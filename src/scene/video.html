@@ -1,0 +1,29 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000}video{width:100%;height:100%;object-fit:cover;display:block}</style></head>
+<body><video id="video" muted loop playsinline></video><script>
+'use strict';
+const video=document.getElementById('video');
+let paused=false,ready=false,failed=false,loadTimer;
+const send=(type,value)=>chrome.webview.postMessage({type,value});
+function fail(message){if(failed)return;failed=true;clearTimeout(loadTimer);send('error',message);}
+function play(){if(!paused&&!failed&&video.readyState>=2)video.play().catch(e=>{if(e.name!=='AbortError')fail('无法启动视频：'+e.message);});}
+window.awallPause=value=>{paused=value;if(value)video.pause();else play();};
+window.awallStats=()=>({paused,time:video.currentTime,width:video.videoWidth,height:video.videoHeight,readyState:video.readyState,ended:video.ended,duration:video.duration,loop:video.loop,mediaPaused:video.paused});
+video.addEventListener('error',()=>{const code=video.error&&video.error.code;fail('视频解码失败（代码 '+code+'）：'+(video.error&&video.error.message||'请检查文件是否损坏或编码是否受支持。'));});
+video.addEventListener('loadeddata',()=>{
+  // Decoded data alone is not a presented frame. Allow the compositor a paint
+  // before telling the host it can remove the previous wallpaper.
+  const firstFrame=()=>requestAnimationFrame(()=>requestAnimationFrame(()=>{if(ready||failed)return;ready=true;clearTimeout(loadTimer);send('ready',window.awallStats());}));
+  if(video.requestVideoFrameCallback)video.requestVideoFrameCallback(firstFrame);else if(!video.paused)firstFrame();else video.addEventListener('playing',firstFrame,{once:true});
+  play();
+});
+chrome.webview.addEventListener('message',event=>{
+  if(event.data.type!=='load')return;
+  video.muted=true;
+  video.src='https://wallpaper.awall.local/'+encodeURIComponent(event.data.video);
+  loadTimer=setTimeout(()=>fail('视频加载超时，请检查素材文件和视频编码。'),30000);
+  video.load();
+});
+send('boot');
+</script></body></html>

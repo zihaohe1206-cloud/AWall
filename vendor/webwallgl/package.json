@@ -1,0 +1,49 @@
+{
+  "name": "webwallgl",
+  "description": "Wallpaper Engine scene wallpaper renderer for the browser (npm / CDN)",
+  "version": "3.0.2",
+  "license": "MIT",
+  "author": "oneincase <462534624@qq.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oneincase/webwallgl.git"
+  },
+  "homepage": "https://github.com/oneincase/webwallgl#readme",
+  "bugs": "https://github.com/oneincase/webwallgl/issues",
+  "type": "module",
+  "sideEffects": false,
+  "keywords": [
+    "wallpaper-engine",
+    "wallpaper",
+    "webgl",
+    "renderer",
+    "scene",
+    "browser",
+    "canvas",
+    "animated-background",
+    "particles"
+  ],
+  "files": [
+    "webwallgl.mjs",
+    "webwallgl.global.min.js",
+    "webwallgl.d.ts",
+    "types.d.ts",
+    "imgs"
+  ],
+  "main": "./webwallgl.global.min.js",
+  "module": "./webwallgl.mjs",
+  "types": "./webwallgl.d.ts",
+  "unpkg": "./webwallgl.global.min.js",
+  "jsdelivr": "./webwallgl.global.min.js",
+  "exports": {
+    ".": {
+      "types": "./webwallgl.d.ts",
+      "import": "./webwallgl.mjs",
+      "default": "./webwallgl.global.min.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "mediabunny": "^1.56.0"
+  }
+}

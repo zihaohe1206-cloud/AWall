@@ -1,0 +1,9 @@
+bin/
+bin-*/
+downloads/
+research/
+test-artifacts/
+vendor/mpv/*.exe
+vendor/mpv/*.dll
+*.user
+*.suo
