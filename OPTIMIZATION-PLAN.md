@@ -21,3 +21,10 @@
 - 新版生成在 bin-next。仅编译和静态检查；未启动新版或运行测试，实际耗时、多屏、恢复与锁屏快照效果待实机验证。
 
 2026-11-16 PKG 启动回归修复：用户运行 bin-next 后，两个 PKG 在 14–21ms 内报 WebView2 HRESULT 0x8007139F，未进入场景加载。撤回上一轮空白控制器预热及环境对象共享，恢复每个播放器独立 CreateAsync/Ensure 初始化的旧路径；保留 profile 隔离、MP4/mpv、并行截图加载、回退与淡入。增加初始化阶段和完整异常堆栈日志。预热暂不启用，之前文档中有关启用预热的描述已失效。修复构建输出 bin-pkg-fix，未替换运行中的 bin-next，也未启动程序或运行测试。实际恢复效果待确认。
+
+2026-11-16 PKG 启动/切换延迟优化（未编译、未实机验证）：
+- PKG 改为 C# 读文件写入 WebView2 SharedBuffer，PostSharedBufferToScript 交给页面，不再经虚拟主机 fetch 整个包；构造时后台预读 PKG 预热系统文件缓存，与 WebView2 浏览器进程启动重叠。失败自动回退 fetch。日志 `PKGBUFFER ... warm=..ms total=..ms`。
+- `/api/local-assets`：materials 索引进程内缓存一次（构造时后台开始）；TEX 读取改为 GetDeferral + 线程池，不再阻塞 UI 线程；进程内 256MB 缓存；响应改为可缓存（引擎用 force-cache 请求）。
+- 切换时新 Player 在屏外 staging 窗口立即启动，与旧帧截图、遮罩建立并行；呈现仍等 coversReady 及全部首帧，回滚逻辑不变。
+- 过渡遮罩截图由 PNG 改为 JPEG。
+- 未做：WebView2 环境预热/复用（上次 0x8007139F 回归，暂不重试）。

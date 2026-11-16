@@ -4,7 +4,7 @@ $root = $PSScriptRoot
 $output = Join-Path $root $OutputDirectory
 $fx = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319"
 New-Item -ItemType Directory -Path "$output" -Force | Out-Null
-& "$fx\csc.exe" /nologo /target:winexe /platform:x64 /win32manifest:"$root\src\AWall.manifest" /out:"$output\AWall.exe" /reference:"$fx\WPF\PresentationFramework.dll" /reference:"$fx\WPF\PresentationCore.dll" /reference:"$fx\WPF\WindowsBase.dll" /reference:System.Xaml.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll /reference:System.Net.Http.dll /reference:"$root\vendor\webview2\Microsoft.Web.WebView2.Core.dll" /reference:"$root\vendor\webview2\Microsoft.Web.WebView2.Wpf.dll" "$root\src\AWall.cs" "$root\src\ScenePlayer.cs" "$root\src\MpvPlayer.cs"
+& "$fx\csc.exe" /nologo /target:winexe /platform:x64 /win32manifest:"$root\src\AWall.manifest" /out:"$output\AWall.exe" /reference:"$fx\WPF\PresentationFramework.dll" /reference:"$fx\WPF\PresentationCore.dll" /reference:"$fx\WPF\WindowsBase.dll" /reference:System.Xaml.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll /reference:System.Net.Http.dll /reference:"$root\vendor\webview2\Microsoft.Web.WebView2.Core.dll" /reference:"$root\vendor\webview2\Microsoft.Web.WebView2.Wpf.dll" "$root\src\AWall.cs" "$root\src\ScenePlayer.cs" "$root\src\MpvPlayer.cs" "$root\src\DesktopHost.cs"
 if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
 Copy-Item -LiteralPath "$root\src\Set-LockImage.ps1" -Destination "$output\Set-LockImage.ps1" -Force
 Copy-Item "$root\vendor\webview2\*.dll" -Destination "$output" -Force

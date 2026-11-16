@@ -5,6 +5,10 @@ let scene, requestedPause=false, dead=false;
 window.awallPause = paused => { requestedPause=paused; if(scene) paused?scene.pause():scene.resume(); };
 window.awallPointer = (u,v) => { if(scene&&!requestedPause) scene.pushPointer(u,v,0); };
 window.awallStats = () => ({ready:!!scene,info:scene?.info,stats:scene?.stats,paused:scene?.paused});
+// The host copies the PKG into WebView2 shared memory before sending 'load'.
+// Register before 'boot' so the buffer cannot arrive without a listener.
+let pkgBufferResolve; const pkgBuffer=new Promise(resolve=>pkgBufferResolve=resolve);
+chrome.webview.addEventListener('sharedbufferreceived',e=>{ if(e.additionalData&&e.additionalData.type==='pkg') pkgBufferResolve(e.getBuffer()); });
 addEventListener('error',e=>send('error',e.message));
 addEventListener('unhandledrejection',e=>send('error',String(e.reason?.stack||e.reason)));
 chrome.webview.addEventListener('message',async e=>{
@@ -13,7 +17,15 @@ chrome.webview.addEventListener('message',async e=>{
   const source=WebWallGL.httpSource('https://wallpaper.awall.local');
   if(e.data.pkg){
    source.sceneDir=async()=>null;
-   source.scenePkg=async signal=>{const r=await fetch('https://wallpaper.awall.local/'+encodeURIComponent(e.data.pkg),{signal});if(!r.ok)throw Error('PKG 文件读取失败：'+r.status);return r.arrayBuffer();};
+   const fetchPkg=async signal=>{const r=await fetch('https://wallpaper.awall.local/'+encodeURIComponent(e.data.pkg),{signal});if(!r.ok)throw Error('PKG 文件读取失败：'+r.status);return r.arrayBuffer();};
+   source.scenePkg=async signal=>{
+    if(e.data.buffered){
+     const buffer=await Promise.race([pkgBuffer,new Promise(resolve=>setTimeout(()=>resolve(null),10000))]);
+     if(buffer) return buffer;
+     send('diagnostic',{level:'info',message:'共享内存 PKG 未送达，回退到 fetch'});
+    }
+    return fetchPkg(signal);
+   };
    const original=source.project;
    source.project=async signal=>({...await original(signal),type:'scene',file:e.data.pkg});
   }

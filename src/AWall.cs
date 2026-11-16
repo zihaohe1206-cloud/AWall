@@ -23,13 +23,13 @@ public class Item {
  public override string ToString() { return (Type == "video" ? "▶ MP4  " : Type=="scene" ? "▧ PKG  " : "◇ WEB  ") + Title; }
 }
 public static class Native {
- static IntPtr desktopParent;
  public delegate bool EnumProc(IntPtr h, IntPtr p);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string c,string n);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr p,IntPtr a,string c,string n);
  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc f,IntPtr p);
  [DllImport("user32.dll")] public static extern IntPtr SetParent(IntPtr h,IntPtr p);
  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
+ [DllImport("user32.dll")] public static extern IntPtr GetParent(IntPtr h);
  [DllImport("user32.dll",SetLastError=true)] public static extern bool SetWindowPos(IntPtr h,IntPtr after,int x,int y,int w,int height,uint flags);
  [DllImport("user32.dll",EntryPoint="GetWindowLongPtrW")] public static extern IntPtr GetLong(IntPtr h,int index);
  [DllImport("user32.dll",EntryPoint="SetWindowLongPtrW")] public static extern IntPtr SetLong(IntPtr h,int index,IntPtr value);
@@ -41,58 +41,43 @@ public static class Native {
  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
  [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left,Top,Right,Bottom; }
  [StructLayout(LayoutKind.Sequential)] public struct WindowPos { public IntPtr Window,After; public int X,Y,Width,Height; public uint Flags; }
- public static IntPtr DesktopParent() {
-  // Sending 0x52c for every staging window can disturb the desktop surface.
-  // Reuse the host until Explorer actually destroys it.
-  if(desktopParent!=IntPtr.Zero&&IsWindow(desktopParent))return desktopParent;
-  var prog=FindWindow("Progman",null); if(prog==IntPtr.Zero) return IntPtr.Zero;
-  IntPtr result; SendMessageTimeout(prog,0x52c,IntPtr.Zero,IntPtr.Zero,2,1500,out result);
-  var child=FindWindowEx(prog,IntPtr.Zero,"WorkerW",null);
-  if(child!=IntPtr.Zero) {desktopParent=child;return child;}
-  IntPtr worker=IntPtr.Zero;
-  EnumWindows(delegate(IntPtr h,IntPtr p) { if(FindWindowEx(h,IntPtr.Zero,"SHELLDLL_DefView",null)!=IntPtr.Zero) worker=FindWindowEx(IntPtr.Zero,h,"WorkerW",null); return worker==IntPtr.Zero; },IntPtr.Zero);
-  desktopParent=worker;return worker;
- }
+ public static IntPtr DesktopParent() {return DesktopHost.Parent();}
+
 }
 public class Player : Window {
  public IntPtr Handle, ParentHandle; public Forms.Screen Monitor;
- bool presented;
+ bool presented,closed,hostFailed;string hostError="";
  public ScenePlayer Scene;
- public bool Ready {get {return Scene.Ready;}}
- public bool Failed {get {return Scene.Failed;}}
- public string LastError {get {return Scene.LastError;}}
+ public bool Ready {get {return !hostFailed&&Scene.Ready;}}
+ public bool Failed {get {return hostFailed||Scene.Failed;}}
+ public string LastError {get {return hostFailed?hostError:Scene.LastError;}}
  public Action<string> Report;
  public Player(Item item,Forms.Screen monitor) {
-  Monitor=monitor; WindowStyle=WindowStyle.None; ResizeMode=ResizeMode.NoResize; ShowInTaskbar=false;
-  ShowActivated=false; Background=Brushes.Black; Width=monitor.Bounds.Width; Height=monitor.Bounds.Height;
-  Scene=new ScenePlayer(item,monitor.DeviceName);Content=Scene.View;
+  Monitor=monitor;WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.NoResize;ShowInTaskbar=false;
+  ShowActivated=false;Background=Brushes.Black;Width=monitor.Bounds.Width;Height=monitor.Bounds.Height;
+  // A renderable staging HWND; attach only after the backend produces a frame.
+  Left=-32000;Top=-32000;WindowStartupLocation=WindowStartupLocation.Manual;
+  Scene=new ScenePlayer(item,monitor.DeviceName);Content=item.Type=="video"?null:Scene.View;
   Scene.Report+=ForwardReport;
-  // Parent and position the HWND before WPF first shows it on the desktop.
-  SourceInitialized+=delegate { Handle=new WindowInteropHelper(this).Handle; HwndSource.FromHwnd(Handle).AddHook(WindowMessage); Attach(); };
-  // WPF can update bounds during Show(); restore desktop-relative bounds before loading.
-  Loaded+=async delegate { Attach();await Scene.Initialize(Handle); };
-  Closed+=delegate { Scene.Dispose(); };
+  SourceInitialized+=delegate {Handle=new WindowInteropHelper(this).Handle;HwndSource.FromHwnd(Handle).AddHook(WindowMessage);
+   Native.SetLong(Handle,-20,new IntPtr(Native.GetLong(Handle,-20).ToInt64()|0x08000080L));};
+  Loaded+=async delegate {try{await Scene.Initialize(Handle);}catch(Exception e){HostFailure(e.Message);}};
+  Closed+=delegate {closed=true;Report=null;Scene.Dispose();};
  }
- void ForwardReport(string message){if(Report!=null)Report(message);}
+ void HostFailure(string message){if(closed)return;hostFailed=true;hostError=message;if(Report!=null)Report(message);}
+ void ForwardReport(string message){if(!closed&&Report!=null)Report(message);}
  public void Pause(bool value){Scene.Pause(value);}
  public Task<string> Stats(){return Scene.Stats();}
  public async Task SeekNearEnd(){await Scene.SeekNearEnd();}
  IntPtr WindowMessage(IntPtr hwnd,int message,IntPtr wParam,IntPtr lParam,ref bool handled){
-  // ShowWindow may raise a newly shown HWND. Keep staging windows underneath
-  // the old wallpaper even when WPF changes their visibility or position.
-  if(message==0x0046&&!presented){var pos=(Native.WindowPos)Marshal.PtrToStructure(lParam,typeof(Native.WindowPos));pos.After=new IntPtr(1);pos.Flags&=~0x0004u;Marshal.StructureToPtr(pos,lParam,false);}
+  if(message==0x0046&&!presented){var pos=(Native.WindowPos)Marshal.PtrToStructure(lParam,typeof(Native.WindowPos));
+   pos.After=new IntPtr(1);pos.Flags&=~0x0004u;
+   if(ParentHandle==IntPtr.Zero){pos.X=-32000;pos.Y=-32000;pos.Flags&=~0x0002u;}
+   Marshal.StructureToPtr(pos,lParam,false);}
   return IntPtr.Zero;
  }
- public void Attach() {
-  ParentHandle=Native.DesktopParent(); if(ParentHandle==IntPtr.Zero) throw new Exception("未找到 Windows 桌面承载窗口。");
-  long style=Native.GetLong(Handle,-16).ToInt64(); Native.SetLong(Handle,-16,new IntPtr((style & ~0x80000000L) | 0x40000000L));
-  Native.SetLong(Handle,-20,new IntPtr(Native.GetLong(Handle,-20).ToInt64() | 0x08000020L));
-  Native.SetParent(Handle,ParentHandle);
-  var b=Monitor.Bounds; Native.Rect p; Native.GetWindowRect(ParentHandle,out p);
-  // Load underneath the current wallpaper; keep it visible so Chromium renders frames.
-  Native.SetWindowPos(Handle,presented?IntPtr.Zero:new IntPtr(1),b.Left-p.Left,b.Top-p.Top,b.Width,b.Height,0x10);
- }
- public void Present(){presented=true;Native.SetWindowPos(Handle,IntPtr.Zero,0,0,0,0,0x13);}
+ public void Attach(){if(closed)throw new ObjectDisposedException("Player");DesktopHost.Attach(Handle,Monitor,!presented);ParentHandle=DesktopHost.Parent();}
+ public void Present(){if(!Ready)throw new InvalidOperationException("播放器尚未就绪。");presented=true;Attach();DesktopHost.Raise(Handle);}
  public async Task<string> Snapshot(string path) {
   return await Scene.Snapshot(path);
  }
@@ -106,14 +91,8 @@ public sealed class TransitionCover : Window {
   Width=screen.Bounds.Width;Height=screen.Bounds.Height;Content=new Image(){Source=frame,Stretch=Stretch.Fill};
   SourceInitialized+=delegate{Handle=new WindowInteropHelper(this).Handle;Attach();};Loaded+=delegate{Attach();};
  }
- public void Attach(){
-  ParentHandle=Native.DesktopParent();if(ParentHandle==IntPtr.Zero)throw new Exception("未找到 Windows 桌面承载窗口。");
-  Native.SetLong(Handle,-16,new IntPtr((Native.GetLong(Handle,-16).ToInt64()&~0x80000000L)|0x40000000L));
-  Native.SetLong(Handle,-20,new IntPtr(Native.GetLong(Handle,-20).ToInt64()|0x08000020L));Native.SetParent(Handle,ParentHandle);
-  Native.Rect parent;Native.GetWindowRect(ParentHandle,out parent);var b=monitor.Bounds;
-  Native.SetWindowPos(Handle,IntPtr.Zero,b.Left-parent.Left,b.Top-parent.Top,b.Width,b.Height,0x10);SetAlpha(255);
- }
- public void Raise(){Native.SetWindowPos(Handle,IntPtr.Zero,0,0,0,0,0x13);}
+ public void Attach(){DesktopHost.Attach(Handle,monitor,false);ParentHandle=DesktopHost.Parent();SetAlpha(255);}
+ public void Raise(){DesktopHost.Raise(Handle);}
  public void SetAlpha(byte alpha){Opacity=alpha/255.0;}
 }
 public static class StartupBackdrop {
@@ -151,9 +130,10 @@ public class MainWindow : Window {
  List<Player> players=new List<Player>(); List<Item> items=new List<Item>();
  List<Player> previousPlayers=new List<Player>(); Item previousItem; bool transitioning; DispatcherTimer transitionTimer;
  List<TransitionCover> covers=new List<TransitionCover>();DispatcherTimer fadeTimer;int transitionVersion;bool fading,previousManualPause;
- Forms.NotifyIcon tray; bool exiting,manualPause,locked; string topology=String.Join(";",Forms.Screen.AllScreens.Select(x=>x.Bounds.ToString())); Item current; DispatcherTimer timer; DispatcherTimer pointerTimer; bool testMode;
+ Forms.NotifyIcon tray; bool exiting,manualPause,locked; string topology=ScreenTopology(); Item current; DispatcherTimer timer; DispatcherTimer pointerTimer; bool testMode;
  string data=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AWall");
  string root="E:\\Steam\\steamapps\\workshop\\content\\431960";
+ Item recoveryItem;bool recoveryBusy;int recoveryAttempts;DateTime nextRecovery;
  Stopwatch transitionClock;double preparationMs;
  void TransitionLog(string phase){try{File.AppendAllText(Path.Combine(data,"transitions.log"),DateTime.Now.ToString("s")+" version="+transitionVersion+" phase="+phase+" elapsedMs="+(transitionClock==null?0:transitionClock.ElapsedMilliseconds)+Environment.NewLine);}catch{}}
  public MainWindow(bool test) {
@@ -169,19 +149,21 @@ public class MainWindow : Window {
   var right=new StackPanel(){Margin=new Thickness(24,0,0,0)}; Grid.SetColumn(right,1); grid.Children.Add(right);
   preview.Height=250; preview.Stretch=Stretch.Uniform; right.Children.Add(preview); detail.TextWrapping=TextWrapping.Wrap; detail.Margin=new Thickness(0,12,0,16); right.Children.Add(detail);
   var actions=new WrapPanel(); right.Children.Add(actions);
-  AddButton(actions,"设为动态桌面",Apply); AddButton(actions,"同步锁屏快照",SyncLock); AddButton(actions,"暂停 / 继续",delegate { manualPause=!manualPause; Tick(); }); AddButton(actions,"停止壁纸",Stop);
+  AddButton(actions,"设为动态桌面",Apply); AddButton(actions,"同步锁屏快照",SyncLock); AddButton(actions,"暂停 / 继续",delegate { manualPause=!manualPause; Tick();SaveLayout(); }); AddButton(actions,"停止壁纸",Stop);
   var manage=new WrapPanel(); right.Children.Add(manage); AddButton(manage,"导入 MP4 / PKG",Import); AddButton(manage,"重新扫描",Scan); AddButton(manage,"选择素材目录",ChooseFolder);
+  pauseCovered.Click+=delegate{SaveLayout();};
   pauseCovered.Margin=new Thickness(4,18,0,10); pauseCovered.Foreground=Brushes.White; right.Children.Add(pauseCovered);
   right.Children.Add(new TextBlock(){Text="MP4 硬件加速循环播放；PKG 场景引擎（30 FPS）。\n部分专用效果可能不兼容；关闭窗口后驻留托盘。",TextWrapping=TextWrapping.Wrap,Foreground=Brushes.LightSlateGray,Margin=new Thickness(4,6,0,0)});
-  library.SelectionChanged+=delegate { var item=library.SelectedItem as Item; if(item==null)return; detail.Text=item.Title+"\n"+(item.Type=="video"?"视频 · WebView2 播放":item.Type=="scene"?"PKG 场景 · WebGL 兼容渲染（非官方引擎）":"网页 · 暂不支持")+"\n"+Path.GetFileName(item.File); preview.Source=null; try { if(System.IO.File.Exists(item.Preview)){var img=new BitmapImage(); img.BeginInit();img.CacheOption=BitmapCacheOption.OnLoad; img.UriSource=new Uri(item.Preview);img.EndInit();preview.Source=img;} }catch{} };
+  library.SelectionChanged+=delegate { var item=library.SelectedItem as Item; if(item==null)return; detail.Text=item.Title+"\n"+(item.Type=="video"?"视频 · mpv 播放":item.Type=="scene"?"PKG 场景 · WebGL 兼容渲染（非官方引擎）":"网页 · 暂不支持")+"\n"+Path.GetFileName(item.File); preview.Source=null; try { if(System.IO.File.Exists(item.Preview)){var img=new BitmapImage(); img.BeginInit();img.CacheOption=BitmapCacheOption.OnLoad; img.UriSource=new Uri(item.Preview);img.EndInit();preview.Source=img;} }catch{} };
   tray=new Forms.NotifyIcon(){Text="AWall",Icon=System.Drawing.SystemIcons.Application,Visible=!test};
   var menu=new Forms.ContextMenuStrip(); menu.Items.Add("打开 AWall",null,delegate { Dispatcher.Invoke(new Action(delegate{Show();Activate();})); });
-  menu.Items.Add("暂停 / 继续",null,delegate{manualPause=!manualPause;Tick();}); menu.Items.Add("退出",null,delegate{Exit();}); tray.ContextMenuStrip=menu;
+  menu.Items.Add("暂停 / 继续",null,delegate{manualPause=!manualPause;Tick();SaveLayout();}); menu.Items.Add("退出",null,delegate{Exit();}); tray.ContextMenuStrip=menu;
   tray.DoubleClick+=delegate{Show();Activate();}; Closing+=delegate(object s,System.ComponentModel.CancelEventArgs e){if(!exiting){e.Cancel=true;Hide();}};
+  SourceInitialized+=delegate{HwndSource.FromHwnd(new WindowInteropHelper(this).Handle).AddHook(ShellMessage);};
   SystemEvents.SessionSwitch+=SessionChanged; SystemEvents.DisplaySettingsChanged+=DisplayChanged;
   timer=new DispatcherTimer(){Interval=TimeSpan.FromSeconds(2)}; timer.Tick+=delegate{Tick();};timer.Start();
   pointerTimer=new DispatcherTimer(){Interval=TimeSpan.FromMilliseconds(50)};pointerTimer.Tick+=delegate{foreach(var p in previousPlayers.Concat(players)){if(p.Scene!=null){var cursor=Forms.Cursor.Position;var b=p.Monitor.Bounds;if(b.Contains(cursor))p.Scene.Pointer((double)(cursor.X-b.Left)/b.Width,(double)(cursor.Y-b.Top)/b.Height);}}};pointerTimer.Start();
-  Scan(); Loaded+=delegate { if(testMode){Hide();var a=Environment.GetCommandLineArgs();int at=Array.IndexOf(a,"--test-file");if(at>=0&&at+1<a.Length){string f=Path.GetFullPath(a[at+1]);items=new List<Item>{new Item(){Title=Path.GetFileName(f),Type=Path.GetExtension(f).ToLowerInvariant()==".pkg"?"scene":"video",File=f,Preview=""}};library.ItemsSource=items;library.SelectedIndex=0;}if(a.Contains("--test-transitions"))TestTransitions();else if(a.Contains("--test-library"))TestLibrary();else RunTest();} };
+  Scan(); Loaded+=delegate { if(testMode){Hide();var a=Environment.GetCommandLineArgs();int at=Array.IndexOf(a,"--test-file");if(at>=0&&at+1<a.Length){string f=Path.GetFullPath(a[at+1]);items=new List<Item>{new Item(){Title=Path.GetFileName(f),Type=Path.GetExtension(f).ToLowerInvariant()==".pkg"?"scene":"video",File=f,Preview=""}};library.ItemsSource=items;library.SelectedIndex=0;}if(a.Contains("--test-transitions"))TestTransitions();else if(a.Contains("--test-library"))TestLibrary();else RunTest();}else{RestoreLayout();} };
  }
  void AddButton(Panel p,string text,Action a) { var b=new Button(){Content=text,Padding=new Thickness(14,9,14,9),Margin=new Thickness(3),Background=new SolidColorBrush(Color.FromRgb(64,105,188)),Foreground=Brushes.White,BorderThickness=new Thickness(0)};b.Click+=delegate{try{a();}catch(Exception e){SetStatus(e.Message);}};p.Children.Add(b); }
  void SetStatus(string s){status.Text=s;System.IO.File.AppendAllText(Path.Combine(data,"AWall.log"),DateTime.Now.ToString("s")+" "+s+Environment.NewLine);}
@@ -191,40 +173,48 @@ public class MainWindow : Window {
   items=items.OrderBy(x=>x.Type=="video"?0:1).ThenBy(x=>x.Title).ToList();library.ItemsSource=null;library.ItemsSource=items;if(items.Count>0)library.SelectedIndex=0;
   SetStatus("已扫描 "+items.Count+" 个素材，其中 "+items.Count(x=>x.Type=="video")+" 个视频、"+items.Count(x=>x.Type=="scene")+" 个 PKG 场景。目录："+root);
  }
- async void Apply(){try{await ApplyAsync();}catch(Exception e){SetStatus(e.Message);}}
- async Task ApplyAsync(){var item=library.SelectedItem as Item;if(item==null)return;if(!item.Supported){SetStatus("当前优先支持 MP4 / PKG，网页素材暂不支持。");return;}if(!System.IO.File.Exists(item.File))throw new Exception("素材入口文件不存在。");
-  if(!transitioning&&current!=null&&String.Equals(current.File,item.File,StringComparison.OrdinalIgnoreCase)&&current.Type==item.Type&&players.Count==Forms.Screen.AllScreens.Length&&players.All(p=>p.Ready&&!p.Failed&&Forms.Screen.AllScreens.Any(s=>s.DeviceName==p.Monitor.DeviceName&&s.Bounds==p.Monitor.Bounds))){SetStatus("当前壁纸已在播放。");return;}
+ async void Apply(){recoveryItem=null;recoveryAttempts=0;try{await ApplyAsync();}catch(Exception e){SetStatus(e.Message);}}
+ async Task ApplyAsync(bool force=false,Item requested=null){var item=requested??library.SelectedItem as Item;if(item==null)return;if(!item.Supported){SetStatus("当前优先支持 MP4 / PKG，网页素材暂不支持。");return;}if(!System.IO.File.Exists(item.File))throw new Exception("素材入口文件不存在。");
+  if(!force&&!transitioning&&current!=null&&String.Equals(current.File,item.File,StringComparison.OrdinalIgnoreCase)&&current.Type==item.Type&&players.Count==Forms.Screen.AllScreens.Length&&players.All(p=>p.Ready&&!p.Failed&&Forms.Screen.AllScreens.Any(s=>s.DeviceName==p.Monitor.DeviceName&&s.Bounds==p.Monitor.Bounds))){SetStatus("当前壁纸已在播放。");return;}
   CancelTransition();
   transitionClock=Stopwatch.StartNew();preparationMs=0;TransitionLog("begin");
   int version=++transitionVersion;previousManualPause=manualPause;
   previousPlayers=players;previousItem=current;players=new List<Player>();current=item;manualPause=false;transitioning=true;
-  var batch=players;var screens=Forms.Screen.AllScreens;bool coversReady=false;
-  Action finish=delegate{if(!coversReady||version!=transitionVersion||players!=batch||!transitioning||fading||batch.Count!=screens.Length||!batch.All(x=>x.Ready))return;foreach(var ready in batch)ready.Present();foreach(var cover in covers)cover.Raise();TransitionLog("all-content-ready");StopTransitionTimer();BeginFade(batch,version);};
+  var batch=players;var screens=Forms.Screen.AllScreens;bool coversReady=false;var announced=new HashSet<Player>();
+  Action finish=delegate{if(!coversReady||version!=transitionVersion||players!=batch||!transitioning||fading||batch.Count!=screens.Length||!batch.All(x=>x.Ready))return;try{TransitionLog("all-content-ready");foreach(var ready in batch)ready.Present();TransitionLog("attached");foreach(var cover in covers)cover.Raise();StopTransitionTimer();BeginFade(batch,version);}catch(Exception e){CancelTransition();SetStatus("桌面挂载失败，已恢复原壁纸："+e.Message);}};
   transitionTimer=new DispatcherTimer(){Interval=TimeSpan.FromSeconds(60)};
   transitionTimer.Tick+=delegate{if(transitioning&&players==batch){CancelTransition();SetStatus("壁纸加载超时，已保留原壁纸。");}};transitionTimer.Start();
   try{
-   // Capture all monitors before showing any cover. Keep the old players alive
-   // but frozen under the covers until the replacement has succeeded.
-   foreach(var screen in screens){var p=new Player(item,screen);p.Report=delegate(string message){
-    if(players!=batch)return;SetStatus(message);
-    // Dispose/replace windows outside WebView2's message callback. A newer request
-    // invalidates this batch, so a late ready/error cannot replace its wallpaper.
-    Dispatcher.BeginInvoke(new Action(delegate{if(players!=batch||!transitioning)return;
+   // Start the old-frame capture, then immediately start the replacement
+   // backends in their off-screen staging windows. They are never presented
+   // before coversReady, so the visual barrier is unchanged, but WebView2
+   // browser startup / mpv startup now overlaps capture + cover setup.
+   TransitionLog("capture-start");var oldBatch=previousPlayers.ToArray();
+   var capture=Task.WhenAll(screens.Select(screen=>CaptureBackdrop(screen,oldBatch)).ToArray());
+   TransitionLog("backends-start");foreach(var screen in screens){var p=new Player(item,screen);p.Report=delegate(string message){
+    if(players!=batch)return;if(p.Ready&&announced.Add(p))TransitionLog("backend-ready "+p.Monitor.DeviceName);SetStatus(message);
+    Dispatcher.BeginInvoke(new Action(delegate{if(players!=batch)return;
      var failed=batch.FirstOrDefault(x=>x.Failed);
-     if(failed!=null){string error=failed.LastError;CancelTransition();SetStatus("壁纸加载失败，已保留原壁纸："+error);return;}
-     finish();
+     if(failed!=null){string error=failed.LastError;if(transitioning){CancelTransition();SetStatus("壁纸加载失败，已保留原壁纸："+error);}else{Stop();SetStatus("壁纸播放器已退出："+error);}return;}
+     if(transitioning)finish();
     }),DispatcherPriority.ContextIdle);
    };batch.Add(p);p.Show();}
-   var frames=await Task.WhenAll(previousPlayers.Select(old=>old.Scene.CaptureFrame()).ToArray());if(version!=transitionVersion)return;
-   for(int i=0;i<previousPlayers.Count;i++){var cover=new TransitionCover(previousPlayers[i].Monitor,frames[i]);covers.Add(cover);cover.Show();}
-   if(previousPlayers.Count==0)foreach(var screen in screens){var cover=new TransitionCover(screen,StartupBackdrop.Capture(screen));covers.Add(cover);cover.Show();}
-   if(covers.Count>0){await Dispatcher.InvokeAsync(delegate{},DispatcherPriority.Render);await Task.Delay(50);if(version!=transitionVersion)return;foreach(var old in previousPlayers)old.Pause(true);}
+   var frames=await capture;if(version!=transitionVersion)return;
+   for(int i=0;i<screens.Length;i++){var cover=new TransitionCover(screens[i],frames[i]);covers.Add(cover);cover.Show();}
+   await Dispatcher.InvokeAsync(delegate{},DispatcherPriority.Render);await Task.Delay(50);if(version!=transitionVersion)return;
+   foreach(var old in oldBatch)old.Pause(true);
    preparationMs=transitionClock.Elapsed.TotalMilliseconds;TransitionLog("covers-ready");
    coversReady=true;finish();
    SetStatus((item.Type=="scene"?"正在加载 PKG：":"正在加载 MP4：")+item.Title+"。锁屏图片需点击“同步锁屏快照”。");}catch{if(version!=transitionVersion)return;CancelTransition();throw;}
  }
+ async Task<BitmapSource> CaptureBackdrop(Forms.Screen screen,Player[] old){
+  var p=old.FirstOrDefault(x=>x.Monitor.DeviceName==screen.DeviceName&&x.Ready&&!x.Failed&&Native.IsWindow(x.Handle));
+  if(p!=null)try{return await p.Scene.CaptureFrame();}catch(Exception e){TransitionLog("capture-fallback: "+e.Message);}
+  return StartupBackdrop.Capture(screen);
+ }
+ static string ScreenTopology(){return String.Join(";",Forms.Screen.AllScreens.Select(x=>x.DeviceName+":"+x.Bounds+":"+x.Primary));}
  void BeginFade(List<Player> batch,int version){
-  fading=true;var elapsed=Stopwatch.StartNew();fadeTimer=new DispatcherTimer(){Interval=TimeSpan.FromMilliseconds(15)};
+  TransitionLog("fade-start");fading=true;var elapsed=Stopwatch.StartNew();fadeTimer=new DispatcherTimer(){Interval=TimeSpan.FromMilliseconds(15)};
   fadeTimer.Tick+=delegate{
    if(version!=transitionVersion||players!=batch)return;
    try{
@@ -233,21 +223,65 @@ public class MainWindow : Window {
     foreach(var cover in covers)cover.SetAlpha((byte)Math.Round(255*(1-progress)));
     if(progress<1&&covers.Count>0)return;
     CloseCovers();transitioning=false;StopFade();var old=previousPlayers;previousPlayers=new List<Player>();previousItem=null;
-    foreach(var retired in old)retired.Close();Tick();TransitionLog("complete");SetStatus("壁纸切换完成。");
+    foreach(var retired in old)retired.Close();Tick();recoveryItem=null;recoveryAttempts=0;SaveLayout();TransitionLog("complete");SetStatus("壁纸切换完成。");
    }catch(Exception e){CancelTransition();SetStatus("壁纸切换失败，已恢复原壁纸："+e.Message);}
   };fadeTimer.Start();
  }
  void StopFade(){if(fadeTimer!=null){fadeTimer.Stop();fadeTimer=null;}fading=false;}
  void CloseCovers(){var old=covers;covers=new List<TransitionCover>();foreach(var cover in old)cover.Close();}
  void StopTransitionTimer(){if(transitionTimer!=null){transitionTimer.Stop();transitionTimer=null;}}
- void CancelTransition(){if(!transitioning)return;TransitionLog("rollback");++transitionVersion;transitioning=false;StopTransitionTimer();StopFade();var pending=players;players=previousPlayers;current=previousItem;manualPause=previousManualPause;previousPlayers=new List<Player>();previousItem=null;foreach(var p in players)p.Present();foreach(var p in pending)p.Close();CloseCovers();Tick();}
- void Stop(){++transitionVersion;transitioning=false;StopTransitionTimer();StopFade();CloseCovers();var all=previousPlayers.Concat(players).ToArray();players=new List<Player>();previousPlayers=new List<Player>();previousItem=null;current=null;foreach(var p in all)p.Close();SetStatus("动态壁纸已停止。");}
+ void CancelTransition(){
+  if(!transitioning)return;TransitionLog("rollback");++transitionVersion;transitioning=false;StopTransitionTimer();StopFade();
+  var pending=players;var restore=previousPlayers;players=restore;current=previousItem;manualPause=previousManualPause;
+  previousPlayers=new List<Player>();previousItem=null;
+  try{foreach(var p in restore.ToArray()){try{if(!p.Ready||p.Failed||!Native.IsWindow(p.Handle))throw new InvalidOperationException("旧播放器已失效");p.Present();}catch(Exception e){TransitionLog("rollback-unavailable: "+e.Message);players.Remove(p);p.Close();}}}
+  finally{foreach(var p in pending)p.Close();CloseCovers();}
+  if(players.Count==0)current=null;
+  Tick();
+ }
+ void Stop(){StopPlayback(true);}
+ void StopPlayback(bool clearLayout){recoveryItem=null;recoveryAttempts=0;++transitionVersion;transitioning=false;StopTransitionTimer();StopFade();CloseCovers();var all=previousPlayers.Concat(players).ToArray();players=new List<Player>();previousPlayers=new List<Player>();previousItem=null;current=null;foreach(var p in all)p.Close();if(clearLayout)try{File.Delete(LayoutPath);}catch(Exception e){SetStatus("清除壁纸布局失败："+e.Message);}SetStatus("动态壁纸已停止。");}
  void Tick(){try{bool covered=false;IntPtr fg=Native.GetForegroundWindow();var cls=new StringBuilder(256);Native.GetClassName(fg,cls,256);Native.Rect r; if(pauseCovered.IsChecked==true&&Native.GetWindowRect(fg,out r)&&!Native.IsIconic(fg)&&cls.ToString()!="Progman"&&cls.ToString()!="WorkerW")foreach(var s in Forms.Screen.AllScreens){var b=s.Bounds;if(r.Left<=b.Left&&r.Top<=b.Top&&r.Right>=b.Right&&r.Bottom>=b.Bottom)covered=true;}
-  foreach(var p in previousPlayers.Concat(players)){if(!Native.IsWindow(p.ParentHandle))p.Attach();if(p.Ready){p.Pause((transitioning&&covers.Count>0&&previousPlayers.Contains(p))||manualPause||locked||covered);}}
-  foreach(var cover in covers){if(!Native.IsWindow(cover.ParentHandle))cover.Attach();cover.Raise();}
+  if(!transitioning&&(players.Any(p=>!Native.IsWindow(p.Handle))||(recoveryItem!=null&&players.Count==0&&recoveryAttempts<5&&DateTime.UtcNow>=nextRecovery))){RebuildDesktop();return;}
+  foreach(var p in previousPlayers.Concat(players).Where(p=>Native.IsWindow(p.Handle))){if(p.ParentHandle!=IntPtr.Zero&&!DesktopHost.IsHealthy(p.ParentHandle))p.Attach();if(p.Ready){p.Pause((transitioning&&covers.Count>0&&previousPlayers.Contains(p))||manualPause||locked||covered);}}
+  foreach(var cover in covers){if(!DesktopHost.IsHealthy(cover.ParentHandle))cover.Attach();cover.Raise();}
  }catch(Exception e){SetStatus("桌面恢复失败："+e.Message);}}
+ readonly uint taskbarCreated=RegisterWindowMessage("TaskbarCreated");
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern uint RegisterWindowMessage(string name);
+ IntPtr ShellMessage(IntPtr hwnd,int message,IntPtr wParam,IntPtr lParam,ref bool handled){
+  if(taskbarCreated!=0&&(uint)message==taskbarCreated)Dispatcher.BeginInvoke(new Action(delegate{recoveryAttempts=0;nextRecovery=DateTime.MinValue;RebuildDesktop();}));return IntPtr.Zero;
+ }
+ async void RebuildDesktop(){await RebuildDesktopAsync();}
+ async Task RebuildDesktopAsync(){
+  if(exiting||recoveryBusy)return;var item=current??recoveryItem;if(item==null)return;
+  recoveryItem=item;recoveryBusy=true;bool keepPause=manualPause;int version=transitionVersion;
+  try{DesktopHost.Invalidate();var pending=ApplyAsync(true,item);version=transitionVersion;await pending;
+   if(version==transitionVersion&&current==item){manualPause=keepPause;Tick();}
+  }catch(Exception e){
+   if(version==transitionVersion||current==null){++recoveryAttempts;nextRecovery=DateTime.UtcNow.AddSeconds(Math.Min(10,recoveryAttempts*2));SetStatus("等待 Windows 桌面恢复："+e.Message);}
+  }finally{recoveryBusy=false;}
+ }
+
  void SessionChanged(object s,SessionSwitchEventArgs e){Dispatcher.BeginInvoke(new Action(delegate{locked=e.Reason==SessionSwitchReason.SessionLock;if(e.Reason==SessionSwitchReason.SessionUnlock)locked=false;Tick();}));}
- void DisplayChanged(object s,EventArgs e){Dispatcher.BeginInvoke(new Action(delegate{string next=String.Join(";",Forms.Screen.AllScreens.Select(x=>x.Bounds.ToString()));if(next!=topology){topology=next;if(current!=null){var item=current;library.SelectedItem=item;Apply();}}}));}
+ void DisplayChanged(object s,EventArgs e){Dispatcher.BeginInvoke(new Action(delegate{string next=ScreenTopology();if(next!=topology){topology=next;if(current!=null){var item=current;library.SelectedItem=item;RebuildDesktop();}}}));}
+ string LayoutPath {get{return Path.Combine(data,testMode?"wallpaper-layout-test.json":"wallpaper-layout.json");}}
+ public sealed class SavedLayout {public string Title,Type,File,Preview;public bool ManualPause;public bool PauseCovered=true;}
+ void SaveLayout(){
+  if(transitioning||current==null||players.Count==0||players.Any(x=>!x.Ready||x.Failed))return;
+  try{var value=new SavedLayout(){Title=current.Title,Type=current.Type,File=current.File,Preview=current.Preview,ManualPause=manualPause,PauseCovered=pauseCovered.IsChecked==true};
+   string temp=LayoutPath+".tmp";File.WriteAllText(temp,new JavaScriptSerializer().Serialize(value));
+   if(File.Exists(LayoutPath))File.Replace(temp,LayoutPath,null);else File.Move(temp,LayoutPath);
+  }catch(Exception e){TransitionLog("save-layout-failed: "+e.Message);}
+ }
+ async void RestoreLayout(){try{await RestoreLayoutAsync();}catch(Exception e){SetStatus("恢复上次壁纸失败："+e.Message);}}
+ async Task RestoreLayoutAsync(){
+  if(!File.Exists(LayoutPath))return;
+  var saved=new JavaScriptSerializer().Deserialize<SavedLayout>(File.ReadAllText(LayoutPath));
+  if(saved==null||!File.Exists(saved.File)||(saved.Type!="video"&&saved.Type!="scene"))throw new IOException("上次壁纸文件不可用。");
+  var item=items.FirstOrDefault(x=>String.Equals(x.File,saved.File,StringComparison.OrdinalIgnoreCase)&&x.Type==saved.Type);
+  if(item==null){item=new Item(){Title=saved.Title,Type=saved.Type,File=saved.File,Preview=saved.Preview};items.Add(item);library.ItemsSource=null;library.ItemsSource=items;}
+  library.SelectedItem=item;pauseCovered.IsChecked=saved.PauseCovered;await ApplyAsync(true,item);manualPause=saved.ManualPause;Tick();
+ }
  async void SyncLock(){if(players.Count==0){SetStatus("请先加载 MP4 或 PKG，再同步锁屏快照。");return;}try{var p=players.FirstOrDefault(x=>x.Monitor.Primary)??players[0];string image=await p.Snapshot(Path.Combine(data,"lock-"+Guid.NewGuid().ToString("N")+".jpg"));SetStatus("正在保存锁屏快照…");var start=new ProcessStartInfo("powershell.exe","-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \""+Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"Set-LockImage.ps1")+"\" -ImagePath \""+image+"\""){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};int code=await System.Threading.Tasks.Task.Run(delegate{using(var proc=Process.Start(start)){string output=proc.StandardOutput.ReadToEnd();string error=proc.StandardError.ReadToEnd();proc.WaitForExit();System.IO.File.WriteAllText(Path.Combine(data,"lock-result.txt"),output+error);return proc.ExitCode;}});SetStatus(code==0?"锁屏静态快照已同步。Win+L 后显示图片，不播放视频。":"锁屏设置失败，详情见 "+Path.Combine(data,"lock-result.txt"));}catch(Exception e){SetStatus(e.Message);}}
  void RunTest(){var check=new DispatcherTimer(){Interval=TimeSpan.FromSeconds(8)};Apply();check.Tick+=async delegate{check.Stop();try{var p=players[0];await p.Snapshot(Path.Combine(data,"test-frame.jpg"));System.IO.File.WriteAllText(Path.Combine(data,"selftest.txt"),"items="+items.Count+"; videos="+items.Count(x=>x.Type=="video")+"; parent="+p.ParentHandle+"; media="+await p.Stats()+"; snapshot=ok");}catch(Exception e){System.IO.File.WriteAllText(Path.Combine(data,"selftest.txt"),e.ToString());}Exit();};check.Start();}
  async void TestLibrary(){
@@ -290,13 +324,22 @@ public class MainWindow : Window {
   try{
    var video=items.First(x=>x.Type=="video");var scene=items.First(x=>x.Type=="scene"&&System.IO.File.Exists(x.File));
    library.SelectedItem=video;await ApplyAsync();await WaitForTransition();
-   if(current!=video||players.Count==0||!players.All(x=>x.Ready)||covers.Count!=0)throw new Exception("首次播放失败");results.Add("first-play: pass");
+   if(current!=video||players.Count==0||!players.All(x=>x.Ready)||covers.Count!=0)throw new Exception("首次播放失败");if(players.Any(x=>Native.GetParent(x.Handle)!=DesktopHost.Parent()))throw new Exception("首帧就绪后未正确挂桌面");results.Add("first-play/checked-parent: pass");
+   var stable=players.ToArray();await ApplyAsync();if(!players.SequenceEqual(stable))throw new Exception("相同素材重复启动");results.Add("same-wallpaper-noop: pass");
    var original=players.ToArray();library.SelectedItem=scene;await ApplyAsync();
+   if(players.Any(x=>!x.Ready&&x.ParentHandle!=IntPtr.Zero))throw new Exception("未就绪播放器提前挂入桌面");
    if(covers.Count!=original.Length||previousPlayers.Count!=original.Length)throw new Exception("快照遮罩未创建");
    var oldCovers=covers.ToArray();await Task.Delay(100);
    if(transitioning){foreach(var old in original){string stats=await old.Stats();if(!stats.Contains("\"paused\":true"))throw new Exception("旧播放器未暂停");}}
    await WaitForTransition();if(current!=scene||!players.All(x=>x.Ready)||covers.Count!=0||previousPlayers.Count!=0||oldCovers.Any(x=>Native.IsWindow(x.Handle)))throw new Exception("场景切换或遮罩清理失败");results.Add("video-to-scene/freeze/fade/cleanup: pass");
    library.SelectedItem=video;await ApplyAsync();await WaitForTransition();if(current!=video||!players.All(x=>x.Ready))throw new Exception("视频切换失败");results.Add("scene-to-video: pass");
+   library.SelectedItem=scene;await RebuildDesktopAsync();await WaitForTransition();if(current!=video||!players.All(x=>x.Ready))throw new Exception("恢复错误使用了预览素材");results.Add("host-rebuild-keeps-playing-item: pass");
+   manualPause=true;Tick();SaveLayout();StopPlayback(false);await RestoreLayoutAsync();await WaitForTransition();if(current==null||current.File!=video.File||!players.All(x=>x.Ready))throw new Exception("启动布局恢复失败");await Task.Delay(200);if(!manualPause||!(await players[0].Stats()).Contains("\"paused\":true"))throw new Exception("启动恢复未保留暂停设置");manualPause=false;Tick();SaveLayout();results.Add("saved-layout-restore/pause: pass");
+   // Simulate loss of one desktop-owned HWND without restarting the user's shell.
+   players[0].Close();library.SelectedItem=scene;await RebuildDesktopAsync();await WaitForTransition();if(current.File!=video.File||!players.All(x=>x.Ready))throw new Exception("桌面窗口销毁后未重建");results.Add("destroyed-window-rebuild: pass");
+   StopPlayback(false);recoveryItem=video;await RebuildDesktopAsync();await WaitForTransition();if(current!=video||!players.All(x=>x.Ready))throw new Exception("桌面恢复未使用保留目标");results.Add("deferred-shell-recovery-target: pass");
+   library.SelectedItem=video;
+
    original=players.ToArray();var broken=new Item(){Title="invalid transition test",Type="video",File=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"..","test-artifacts","invalid.mp4"),Preview=""};items.Add(broken);library.ItemsSource=null;library.ItemsSource=items;library.SelectedItem=broken;
    await ApplyAsync();await WaitForTransition();if(current!=video||!players.SequenceEqual(original)||covers.Count!=0||!players.All(x=>x.Ready))throw new Exception("失败后没有恢复旧播放器");results.Add("failed-load-rollback: pass");
    library.SelectedItem=scene;var stale=ApplyAsync();library.SelectedItem=video;var latest=ApplyAsync();await Task.WhenAll(stale,latest);await WaitForTransition();if(current!=video||covers.Count!=0||previousPlayers.Count!=0)throw new Exception("连续切换遗留状态");results.Add("rapid-switch: pass");
@@ -305,7 +348,7 @@ public class MainWindow : Window {
   }catch(Exception e){System.IO.File.WriteAllText(resultPath,new JavaScriptSerializer().Serialize(new{success=false,checks=results,error=e.ToString()}));}
   Exit();
  }
- void Exit(){exiting=true;timer.Stop();pointerTimer.Stop();SystemEvents.SessionSwitch-=SessionChanged;SystemEvents.DisplaySettingsChanged-=DisplayChanged;Stop();tray.Dispose();Application.Current.Shutdown();}
+ void Exit(){exiting=true;timer.Stop();pointerTimer.Stop();SystemEvents.SessionSwitch-=SessionChanged;SystemEvents.DisplaySettingsChanged-=DisplayChanged;SaveLayout();StopPlayback(false);tray.Dispose();Application.Current.Shutdown();}
  [STAThread]public static void Main(string[] args){Native.SetProcessDPIAware();bool owned;using(var mutex=new System.Threading.Mutex(true,"Local\\AWall.Desktop",out owned)){if(!owned){MessageBox.Show("AWall 已运行，请从托盘打开。");return;}var app=new Application(){ShutdownMode=ShutdownMode.OnExplicitShutdown};app.DispatcherUnhandledException+=delegate(object s,DispatcherUnhandledExceptionEventArgs e){System.IO.File.AppendAllText(Path.Combine(Path.GetTempPath(),"AWall-error.log"),e.Exception.ToString());MessageBox.Show(e.Exception.Message,"AWall");e.Handled=true;};app.Run(new MainWindow(args.Contains("--self-test")||args.Contains("--test-library")||args.Contains("--test-transitions")));}}
 }
 }
