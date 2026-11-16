@@ -22,7 +22,11 @@ public sealed class ScenePlayer : IDisposable {
  public string ReadyInfo=""; public event Action<string> Report;
  bool disposed,pointerBusy,pauseBusy; bool? paused,appliedPause; string log,profile; Item item; readonly HashSet<string> warnings=new HashSet<string>();
  readonly TaskCompletionSource<bool> closed=new TaskCompletionSource<bool>();
- bool IsVideo {get {return item.Type=="video";}}
+ bool IsVideo {get {return item!=null&&item.Type=="video";}}
+ // A standby player is created without an item: it starts the browser process,
+ // loads index.html and the engine script, then waits at "boot" until Assign().
+ public bool Standby {get {return item==null;}}
+ bool booted,mediaMapped; CoreWebView2 bootCore;
  string Kind {get {return IsVideo?"MP4":"PKG";}}
  const string AppHost="awall.local", MediaHost="wallpaper.awall.local";
  const string Assets="E:\\Steam\\steamapps\\common\\wallpaper_engine\\assets";
@@ -68,7 +72,7 @@ public sealed class ScenePlayer : IDisposable {
   }
  }
  Task pkgWarm; CoreWebView2SharedBuffer pkgBuffer;
- bool IsPkg {get {return !IsVideo&&Path.GetExtension(item.File).Equals(".pkg",StringComparison.OrdinalIgnoreCase);}}
+ bool IsPkg {get {return item!=null&&!IsVideo&&Path.GetExtension(item.File).Equals(".pkg",StringComparison.OrdinalIgnoreCase);}}
  public ScenePlayer(Item value,string display) {
   item=value;
   if(!IsVideo){MaterialIndex();if(IsPkg)pkgWarm=WarmPkg(item.File);}
@@ -80,9 +84,20 @@ public sealed class ScenePlayer : IDisposable {
   string folder=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AWall","WebView2",key);
   do{profile=Path.Combine(folder,"slot-"+slot++);}while(activeProfiles.Contains(profile));
   activeProfiles.Add(profile);
-  log=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AWall",(value.Type=="video"?"video-":"scene-")+Path.GetFileName(Path.GetDirectoryName(value.File))+".log");
+  log=LogPath(value);
  }
- void Write(string line){ try{File.AppendAllText(log,DateTime.Now.ToString("s")+" "+line+Environment.NewLine);}catch{} }
+ static string LogPath(Item value){return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AWall",value==null?"scene-standby.log":(value.Type=="video"?"video-":"scene-")+Path.GetFileName(Path.GetDirectoryName(value.File))+".log");}
+ void MapMedia(){if(mediaMapped||item==null||disposed||View.CoreWebView2==null)return;View.CoreWebView2.SetVirtualHostNameToFolderMapping(MediaHost,Path.GetDirectoryName(item.File),CoreWebView2HostResourceAccessKind.Allow);mediaMapped=true;}
+ public void Assign(Item value){
+  if(disposed)throw new ObjectDisposedException("ScenePlayer");
+  if(item!=null||value==null||value.Type!="scene")throw new InvalidOperationException("只能为待命的 PKG 播放器分配场景。");
+  Write("ASSIGN "+value.File+" booted="+booted);
+  item=value;log=LogPath(value);Write("ASSIGN from standby booted="+booted);
+  MaterialIndex();if(IsPkg)pkgWarm=WarmPkg(item.File);
+  MapMedia();
+  if(booted)SendLoad(bootCore);
+ }
+ void Write(string line){ try{File.AppendAllText(log,DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss.fff")+" "+line+Environment.NewLine);}catch{} }
  void Response(CoreWebView2WebResourceRequestedEventArgs e,byte[] bytes,string mime,int code,string cache="no-store"){e.Response=View.CoreWebView2.Environment.CreateWebResourceResponse(new MemoryStream(bytes),code,code==200?"OK":code==403?"Forbidden":"Not Found","Content-Type: "+mime+"\r\nAccess-Control-Allow-Origin: https://awall.local\r\nCache-Control: "+cache);}
  void Json(CoreWebView2WebResourceRequestedEventArgs e,object value){Response(e,Encoding.UTF8.GetBytes(new JavaScriptSerializer().Serialize(value)),"application/json",200);}
  void Resource(object s,CoreWebView2WebResourceRequestedEventArgs e){
@@ -131,7 +146,7 @@ public sealed class ScenePlayer : IDisposable {
    core.Settings.AreDefaultContextMenusEnabled=false;core.Settings.AreDevToolsEnabled=false;
    core.Settings.IsStatusBarEnabled=false;core.Settings.AreHostObjectsAllowed=false;core.Settings.IsZoomControlEnabled=false;
    core.SetVirtualHostNameToFolderMapping(AppHost,Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"scene"),CoreWebView2HostResourceAccessKind.DenyCors);
-   core.SetVirtualHostNameToFolderMapping(MediaHost,Path.GetDirectoryName(item.File),CoreWebView2HostResourceAccessKind.Allow);
+   MapMedia();
    core.AddWebResourceRequestedFilter("*",CoreWebView2WebResourceContext.All);
    core.WebResourceRequested+=Resource;
    core.PermissionRequested+=delegate(object sender,CoreWebView2PermissionRequestedEventArgs e){e.State=CoreWebView2PermissionState.Deny;};
@@ -145,12 +160,13 @@ public sealed class ScenePlayer : IDisposable {
     try{
      var msg=new JavaScriptSerializer(){MaxJsonLength=4*1024*1024}.Deserialize<Dictionary<string,object>>(e.WebMessageAsJson);
      string type=Convert.ToString(msg["type"]);object val=msg.ContainsKey("value")?msg["value"]:null;
-     if(type=="boot")SendLoad(core);
+     if(type=="boot"){if(booted)return;booted=true;bootCore=core;Write("BOOT"+(item==null?" standby":""));if(item!=null)SendLoad(core);}
      else if(type=="ready"){if(Ready||Failed)return;Ready=true;ReadyInfo=new JavaScriptSerializer().Serialize(val);if(paused.HasValue)Pause(paused.Value);Write("READY "+ReadyInfo);if(Report!=null)Report(IsVideo?"MP4 首帧已就绪。":"PKG 首帧已就绪；诊断警告 "+Warnings+" 条。");}
      else if(type=="error")Fail(Convert.ToString(val));
      else if(type=="diagnostic"){var d=val as Dictionary<string,object>;string level=Convert.ToString(d["level"]);string message=Convert.ToString(d["message"]);if(level=="warn"){if(!warnings.Add(message))return;Warnings=warnings.Count;if(Report!=null)Report("PKG 兼容性警告 "+Warnings+" 条："+message);}Write(level+" "+message);}
     }catch(Exception ex){Write("MESSAGE "+ex.Message);}
    };
+   core.NavigationCompleted+=delegate(object sender,CoreWebView2NavigationCompletedEventArgs e){Write("NAV completed ok="+e.IsSuccess);};
    core.Navigate(IsVideo?"https://awall.local/video.html":"https://awall.local/index.html?localAssets=1");
   }catch(Exception ex){Write("INIT EXCEPTION "+ex.ToString());Fail(ex.Message);}
  }

@@ -57,13 +57,16 @@ public class Player : Window {
   ShowActivated=false;Background=Brushes.Black;Width=monitor.Bounds.Width;Height=monitor.Bounds.Height;
   // A renderable staging HWND; attach only after the backend produces a frame.
   Left=-32000;Top=-32000;WindowStartupLocation=WindowStartupLocation.Manual;
-  Scene=new ScenePlayer(item,monitor.DeviceName);Content=item.Type=="video"?null:Scene.View;
+  Scene=new ScenePlayer(item,monitor.DeviceName);Content=item!=null&&item.Type=="video"?null:Scene.View;
   Scene.Report+=ForwardReport;
   SourceInitialized+=delegate {Handle=new WindowInteropHelper(this).Handle;HwndSource.FromHwnd(Handle).AddHook(WindowMessage);
    Native.SetLong(Handle,-20,new IntPtr(Native.GetLong(Handle,-20).ToInt64()|0x08000080L));};
   Loaded+=async delegate {try{await Scene.Initialize(Handle);}catch(Exception e){HostFailure(e.Message);}};
   Closed+=delegate {closed=true;Report=null;Scene.Dispose();};
  }
+ public bool IsClosed {get {return closed;}}
+ // Hand a pre-started standby PKG player its scene (see MainWindow.TakeStandby).
+ public void Assign(Item item){if(closed)throw new ObjectDisposedException("Player");Scene.Assign(item);}
  void HostFailure(string message){if(closed)return;hostFailed=true;hostError=message;if(Report!=null)Report(message);}
  void ForwardReport(string message){if(!closed&&Report!=null)Report(message);}
  public void Pause(bool value){Scene.Pause(value);}
@@ -172,6 +175,7 @@ public class MainWindow : Window {
  void Scan(){items.Clear(); if(Directory.Exists(root))foreach(var file in Directory.GetFiles(root,"project.json",SearchOption.AllDirectories)){try {var j=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(System.IO.File.ReadAllText(file));var dir=Path.GetDirectoryName(file);string type=j.ContainsKey("type")?Convert.ToString(j["type"]).ToLowerInvariant():"scene";string entry=j.ContainsKey("file")?Convert.ToString(j["file"]):"";var item=new Item(){Title=j.ContainsKey("title")?Convert.ToString(j["title"]):Path.GetFileName(dir),Type=type,File=Path.GetFullPath(Path.Combine(dir,entry)),Preview=Path.Combine(dir,j.ContainsKey("preview")?Convert.ToString(j["preview"]):"preview.jpg")};if(!item.File.StartsWith(dir+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))continue;if(type=="scene"&&!System.IO.File.Exists(item.File)&&System.IO.File.Exists(Path.Combine(dir,"scene.pkg")))item.File=Path.Combine(dir,"scene.pkg");items.Add(item);}catch{}}
   items=items.OrderBy(x=>x.Type=="video"?0:1).ThenBy(x=>x.Title).ToList();library.ItemsSource=null;library.ItemsSource=items;if(items.Count>0)library.SelectedIndex=0;
   SetStatus("已扫描 "+items.Count+" 个素材，其中 "+items.Count(x=>x.Type=="video")+" 个视频、"+items.Count(x=>x.Type=="scene")+" 个 PKG 场景。目录："+root);
+  ScheduleStandby();
  }
  async void Apply(){recoveryItem=null;recoveryAttempts=0;try{await ApplyAsync();}catch(Exception e){SetStatus(e.Message);}}
  async Task ApplyAsync(bool force=false,Item requested=null){var item=requested??library.SelectedItem as Item;if(item==null)return;if(!item.Supported){SetStatus("当前优先支持 MP4 / PKG，网页素材暂不支持。");return;}if(!System.IO.File.Exists(item.File))throw new Exception("素材入口文件不存在。");
@@ -191,7 +195,7 @@ public class MainWindow : Window {
    // browser startup / mpv startup now overlaps capture + cover setup.
    TransitionLog("capture-start");var oldBatch=previousPlayers.ToArray();
    var capture=Task.WhenAll(screens.Select(screen=>CaptureBackdrop(screen,oldBatch)).ToArray());
-   TransitionLog("backends-start");foreach(var screen in screens){var p=new Player(item,screen);p.Report=delegate(string message){
+   TransitionLog("backends-start");foreach(var screen in screens){var p=TakeStandby(item,screen)??new Player(item,screen);p.Report=delegate(string message){
     if(players!=batch)return;if(p.Ready&&announced.Add(p))TransitionLog("backend-ready "+p.Monitor.DeviceName);SetStatus(message);
     Dispatcher.BeginInvoke(new Action(delegate{if(players!=batch)return;
      var failed=batch.FirstOrDefault(x=>x.Failed);
@@ -199,9 +203,22 @@ public class MainWindow : Window {
      if(transitioning)finish();
     }),DispatcherPriority.ContextIdle);
    };batch.Add(p);p.Show();}
-   var frames=await capture;if(version!=transitionVersion)return;
-   for(int i=0;i<screens.Length;i++){var cover=new TransitionCover(screens[i],frames[i]);covers.Add(cover);cover.Show();}
-   await Dispatcher.InvokeAsync(delegate{},DispatcherPriority.Render);await Task.Delay(50);if(version!=transitionVersion)return;
+   // With a pre-started standby the new scene is often ready before the old
+   // frame capture finishes (mpv/WebView capture can take ~1s). Do not let the
+   // cover gate the switch: once all new content has been ready for 100ms and
+   // the capture is still pending, present with a direct cut instead of a fade.
+   long readyAt=-1;
+   while(!capture.IsCompleted){
+    if(version!=transitionVersion)return;
+    if(batch.Count==screens.Length&&batch.All(x=>x.Ready)){if(readyAt<0)readyAt=transitionClock.ElapsedMilliseconds;else if(transitionClock.ElapsedMilliseconds-readyAt>=100)break;}
+    await Task.WhenAny(capture,Task.Delay(25));
+   }
+   if(version!=transitionVersion)return;
+   if(capture.IsCompleted&&!capture.IsFaulted&&!capture.IsCanceled){
+    var frames=capture.Result;TransitionLog("capture-done");
+    for(int i=0;i<screens.Length;i++){var cover=new TransitionCover(screens[i],frames[i]);covers.Add(cover);cover.Show();}
+    await Dispatcher.InvokeAsync(delegate{},DispatcherPriority.Render);await Task.Delay(50);if(version!=transitionVersion)return;
+   }else{TransitionLog("covers-skipped capture-pending");capture.ContinueWith(t=>{var ignored=t.Exception;},TaskContinuationOptions.OnlyOnFaulted);}
    foreach(var old in oldBatch)old.Pause(true);
    preparationMs=transitionClock.Elapsed.TotalMilliseconds;TransitionLog("covers-ready");
    coversReady=true;finish();
@@ -223,10 +240,35 @@ public class MainWindow : Window {
     foreach(var cover in covers)cover.SetAlpha((byte)Math.Round(255*(1-progress)));
     if(progress<1&&covers.Count>0)return;
     CloseCovers();transitioning=false;StopFade();var old=previousPlayers;previousPlayers=new List<Player>();previousItem=null;
-    foreach(var retired in old)retired.Close();Tick();recoveryItem=null;recoveryAttempts=0;SaveLayout();TransitionLog("complete");SetStatus("壁纸切换完成。");
+    foreach(var retired in old)retired.Close();Tick();recoveryItem=null;recoveryAttempts=0;SaveLayout();TransitionLog("complete");ScheduleStandby();SetStatus("壁纸切换完成。");
    }catch(Exception e){CancelTransition();SetStatus("壁纸切换失败，已恢复原壁纸："+e.Message);}
   };fadeTimer.Start();
  }
+ // PKG startup cost is dominated by WebView2: a new browser process (~1s) plus
+ // loading index.html and the 1.1MB engine script (~1s). Keep one pre-started
+ // player per monitor parked off-screen at "boot" so the next PKG switch only
+ // pays for mounting the scene. It uses its own profile slot, so it never
+ // shares a browser process with the live wallpaper. Costs one idle WebView2.
+ Dictionary<string,Player> standbys=new Dictionary<string,Player>();
+ Player TakeStandby(Item item,Forms.Screen screen){
+  if(item.Type!="scene")return null;Player p;
+  if(!standbys.TryGetValue(screen.DeviceName,out p))return null;standbys.Remove(screen.DeviceName);
+  if(p.IsClosed||p.Failed||!p.Scene.Standby||p.Monitor.Bounds!=screen.Bounds){try{p.Close();}catch{}return null;}
+  try{p.Assign(item);TransitionLog("standby-used "+screen.DeviceName);return p;}catch{try{p.Close();}catch{}return null;}
+ }
+ void ScheduleStandby(){
+  if(testMode||exiting||!items.Any(x=>x.Type=="scene"))return;
+  // Let the wallpaper that just appeared settle before starting another browser.
+  var delay=new DispatcherTimer(){Interval=TimeSpan.FromMilliseconds(500)};delay.Tick+=delegate{delay.Stop();PrepareStandby();};delay.Start();
+ }
+ void PrepareStandby(){
+  if(testMode||exiting||transitioning)return;
+  var screens=Forms.Screen.AllScreens;
+  foreach(var key in standbys.Keys.ToArray()){var old=standbys[key];if(!old.IsClosed&&!old.Failed&&screens.Any(s=>s.DeviceName==key&&s.Bounds==old.Monitor.Bounds))continue;standbys.Remove(key);try{old.Close();}catch{}}
+  foreach(var screen in screens){if(standbys.ContainsKey(screen.DeviceName))continue;
+   try{var p=new Player(null,screen);standbys[screen.DeviceName]=p;p.Show();TransitionLog("standby-start "+screen.DeviceName);}catch(Exception e){TransitionLog("standby-failed "+e.Message);}}
+ }
+ void CloseStandbys(){foreach(var p in standbys.Values.ToArray()){try{p.Close();}catch{}}standbys.Clear();}
  void StopFade(){if(fadeTimer!=null){fadeTimer.Stop();fadeTimer=null;}fading=false;}
  void CloseCovers(){var old=covers;covers=new List<TransitionCover>();foreach(var cover in old)cover.Close();}
  void StopTransitionTimer(){if(transitionTimer!=null){transitionTimer.Stop();transitionTimer=null;}}
@@ -348,7 +390,7 @@ public class MainWindow : Window {
   }catch(Exception e){System.IO.File.WriteAllText(resultPath,new JavaScriptSerializer().Serialize(new{success=false,checks=results,error=e.ToString()}));}
   Exit();
  }
- void Exit(){exiting=true;timer.Stop();pointerTimer.Stop();SystemEvents.SessionSwitch-=SessionChanged;SystemEvents.DisplaySettingsChanged-=DisplayChanged;SaveLayout();StopPlayback(false);tray.Dispose();Application.Current.Shutdown();}
+ void Exit(){exiting=true;timer.Stop();pointerTimer.Stop();SystemEvents.SessionSwitch-=SessionChanged;SystemEvents.DisplaySettingsChanged-=DisplayChanged;SaveLayout();StopPlayback(false);CloseStandbys();tray.Dispose();Application.Current.Shutdown();}
  [STAThread]public static void Main(string[] args){Native.SetProcessDPIAware();bool owned;using(var mutex=new System.Threading.Mutex(true,"Local\\AWall.Desktop",out owned)){if(!owned){MessageBox.Show("AWall 已运行，请从托盘打开。");return;}var app=new Application(){ShutdownMode=ShutdownMode.OnExplicitShutdown};app.DispatcherUnhandledException+=delegate(object s,DispatcherUnhandledExceptionEventArgs e){System.IO.File.AppendAllText(Path.Combine(Path.GetTempPath(),"AWall-error.log"),e.Exception.ToString());MessageBox.Show(e.Exception.Message,"AWall");e.Handled=true;};app.Run(new MainWindow(args.Contains("--self-test")||args.Contains("--test-library")||args.Contains("--test-transitions")));}}
 }
 }
