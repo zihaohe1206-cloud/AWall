@@ -36,4 +36,4 @@ mpv 上游：[mpv-player/mpv](https://github.com/mpv-player/mpv)；许可证见 
 - 上游：[rocksdanister/lively](https://github.com/rocksdanister/lively)。本地研究检出提交为 `25a0a5f4ed1988ff42117d3a17feb321062237fe`，其 LICENSE 为 GNU GPL version 3。
 - REA 静态分析目标为本机安装的 Lively.dll 2.2.1.0，SHA-256 `ca73583755c8fc381cdda674bfbc3c60fea0bf924dcb06f846083c0b30f354ad`，MVID `132f72e5-047c-4397-9fed-876a4eb08716`。研究源码和安装二进制的 raised desktop 分支存在差异，不能视为同一精确构建。
 - AWall 按观察到的桌面发现、播放器启动后挂载、退出与恢复机制独立重写宿主流程，并按本项目需求保留真实首帧、快照遮罩和回滚。Lively 程序集未被复制为 AWall 的运行依赖；这项实现方式说明不构成许可豁免声明。上文所列 mpv 运行文件仍按其实际来源和许可材料处理。
-- 调查证据、适配差异及迁移验证见 [LIVELY-MIGRATION-PLAN.md](LIVELY-MIGRATION-PLAN.md)。本机 `research/` 和 `test-artifacts/` 研究产物不包含在应用构建输出中。
+

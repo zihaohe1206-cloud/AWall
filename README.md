@@ -17,7 +17,7 @@ Windows 动态桌面壁纸与锁屏静态快照原型。不依赖 Wallpaper Engi
 
 - MP4：使用独立 mpv 子进程，静音循环、cover 填充，硬解首选 `auto-safe`；实际是否硬解依赖驱动及编码。通过 playback-restart 检测首帧，启动与首帧总上限为 30 秒。退出优先发送 IPC quit，有限等待后回收自有进程；Job Object在AWall异常终止时兜底回收mpv。
 - 切换壁纸：并行捕获各屏旧画面，先显示独立桌面遮罩并暂停旧播放器，再在离屏窗口初始化新内容；真实首帧就绪后挂载桌面，全部显示器就绪后以 350ms 淡出遮罩。加载失败或 60 秒切换超时恢复旧壁纸；首次播放用系统静态背景遮罩。健康的同素材重复应用跳过重建。
-- 首次遮罩支持系统背景色及常见图片布局；暂不完整还原按显示器分别设置的不同图片或 Spotlight。优化执行记录和未验证项见 `OPTIMIZATION-PLAN.md`，切换阶段耗时写入 `%LOCALAPPDATA%\AWall\transitions.log`。
+- 首次遮罩支持系统背景色及常见图片布局；暂不完整还原按显示器分别设置的不同图片或 Spotlight。切换阶段耗时写入 `%LOCALAPPDATA%\AWall\transitions.log`。
 - PKG：WebWallGL 3.0.2 + 本机 WebView2，按需启动，默认 30 FPS。解析真实场景、TEX 纹理、图层、粒子及兼容效果，不以预览图代替。
 - `project.json` 指向不存在的 `scene.json` 而目录中包含 `scene.pkg` 时自动使用包；可扫描松散场景目录。
 - PKG 为兼容渲染，**不保证任意特效、模型和 SceneScript 与官方完全一致**。状态栏显示警告数量，详情记录到逐场景日志。
@@ -41,9 +41,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 
 使用系统 .NET Framework 4.x 的 x64 C# 编译器和 WPF。固定版本依赖已置于 `vendor/`，构建无需联网。机器需安装 WebView2 Runtime（本机已有）。许可见 `THIRD-PARTY-NOTICES.md`。
 
-若 `bin/AWall.exe` 正在运行，可加 `-OutputDirectory bin-next` 构建到独立目录。Lively 逆向证据、迁移方案、实际构建与测试结果见 [LIVELY-MIGRATION-PLAN.md](LIVELY-MIGRATION-PLAN.md)。
+若 `bin/AWall.exe` 正在运行，可加 `-OutputDirectory bin-next` 构建到独立目录。
 
-关闭正在运行的 AWall 后，可运行 `bin/AWall.exe --test-transitions` 做切换集成验证（会临时播放本机素材并在结束时退出）。结果写入 `%LOCALAPPDATA%\AWall\transition-test.json`，覆盖首次播放、视频/场景互切、旧播放器暂停、遮罩清理、损坏视频回退、连续切换和捕获中停止。
 
 ## 目录
 
@@ -63,3 +62,4 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 素材版权属于原作者，仅从本机现有下载读取，不包含在源代码中。
 
 正式启动入口：`AWall.cmd` 或 `bin/AWall.exe`。PKG 使用独立 WebView2 环境，当前不做环境预热复用。GitHub 源码不包含本机素材、研究副本及来源尚未完整核实的 mpv 二进制；本机编译需在 `vendor/mpv` 放置所需运行文件，来源见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+
