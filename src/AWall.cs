@@ -180,6 +180,11 @@ public class MainWindow : Window {
  async void Apply(){recoveryItem=null;recoveryAttempts=0;try{await ApplyAsync();}catch(Exception e){SetStatus(e.Message);}}
  async Task ApplyAsync(bool force=false,Item requested=null){var item=requested??library.SelectedItem as Item;if(item==null)return;if(!item.Supported){SetStatus("当前优先支持 MP4 / PKG，网页素材暂不支持。");return;}if(!System.IO.File.Exists(item.File))throw new Exception("素材入口文件不存在。");
   if(!force&&!transitioning&&current!=null&&String.Equals(current.File,item.File,StringComparison.OrdinalIgnoreCase)&&current.Type==item.Type&&players.Count==Forms.Screen.AllScreens.Length&&players.All(p=>p.Ready&&!p.Failed&&Forms.Screen.AllScreens.Any(s=>s.DeviceName==p.Monitor.DeviceName&&s.Bounds==p.Monitor.Bounds))){SetStatus("当前壁纸已在播放。");return;}
+  // PKG -> PKG: swap the scene inside the already running page instead of
+  // building a new WebView2. While a swap runs, remember only the latest
+  // requested scene and apply it when the current swap settles.
+  if(!force&&swapping){if(item.Type=="scene"){pendingSwap=item;SetStatus("正在切换中，稍后加载："+item.Title);return;}pendingSwap=null;}
+  if(!force&&!transitioning&&!swapping&&item.Type=="scene"&&current!=null&&current.Type=="scene"&&CanSwapAll()){await SwapAsync(item);return;}
   CancelTransition();
   transitionClock=Stopwatch.StartNew();preparationMs=0;TransitionLog("begin");
   int version=++transitionVersion;previousManualPause=manualPause;
@@ -255,6 +260,22 @@ public class MainWindow : Window {
   if(!standbys.TryGetValue(screen.DeviceName,out p))return null;standbys.Remove(screen.DeviceName);
   if(p.IsClosed||p.Failed||!p.Scene.Standby||p.Monitor.Bounds!=screen.Bounds){try{p.Close();}catch{}return null;}
   try{p.Assign(item);TransitionLog("standby-used "+screen.DeviceName);return p;}catch{try{p.Close();}catch{}return null;}
+ }
+ bool swapping; Item pendingSwap;
+ bool CanSwapAll(){var screens=Forms.Screen.AllScreens;return players.Count>0&&players.Count==screens.Length&&players.All(p=>!p.IsClosed&&p.Scene.CanSwap&&screens.Any(s=>s.DeviceName==p.Monitor.DeviceName&&s.Bounds==p.Monitor.Bounds));}
+ async Task SwapAsync(Item item){
+  swapping=true;int version=++transitionVersion;var batch=players;
+  transitionClock=Stopwatch.StartNew();preparationMs=0;TransitionLog("swap-begin");
+  SetStatus("正在加载 PKG："+item.Title+"（同页切换）。");
+  bool[] results;
+  try{results=await Task.WhenAll(batch.Select(p=>p.Scene.Swap(item)).ToArray());}
+  finally{swapping=false;}
+  var next=pendingSwap;pendingSwap=null;
+  if(version!=transitionVersion||players!=batch)return;
+  if(results.All(x=>x)){current=item;manualPause=false;Tick();SaveLayout();TransitionLog("swap-complete");SetStatus("壁纸切换完成。");}
+  else if(results.Any(x=>x)){TransitionLog("swap-partial rebuild");await ApplyAsync(true,item);return;}
+  else{string error=String.Join("；",batch.Select(p=>p.Scene.LastSwapError).Where(x=>!String.IsNullOrEmpty(x)).Distinct().ToArray());TransitionLog("swap-failed "+error);SetStatus("壁纸加载失败，已保留原壁纸："+error);}
+  if(next!=null&&(current==null||!String.Equals(next.File,current.File,StringComparison.OrdinalIgnoreCase)))await ApplyAsync(false,next);
  }
  void ScheduleStandby(){
   if(testMode||exiting||!items.Any(x=>x.Type=="scene"))return;

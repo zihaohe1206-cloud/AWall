@@ -1,49 +1,89 @@
-<!doctype html><html><head><meta charset="utf-8"><style>html,body,#stage{margin:0;width:100%;height:100%;overflow:hidden;background:#000}#error{position:absolute;inset:20px;color:#ffd2d2;font:16px sans-serif;white-space:pre-wrap;pointer-events:none}</style></head><body><div id="stage"></div><div id="error"></div><script src="webwallgl.global.min.js"></script><script>
+<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000}#stage,.layer{position:absolute;inset:0;overflow:hidden}.layer{opacity:0;transition:opacity 350ms linear}#error{position:absolute;inset:20px;z-index:10;color:#ffd2d2;font:16px sans-serif;white-space:pre-wrap;pointer-events:none}</style></head><body><div id="stage"></div><div id="error"></div><script src="webwallgl.global.min.js"></script><script>
 'use strict';
 const send = (type, value) => chrome.webview.postMessage({type,value});
-let scene, requestedPause=false, dead=false;
+let scene, container=null, requestedPause=false, dead=false, swapping=null;
 window.awallPause = paused => { requestedPause=paused; if(scene) paused?scene.pause():scene.resume(); };
 window.awallPointer = (u,v) => { if(scene&&!requestedPause) scene.pushPointer(u,v,0); };
 window.awallStats = () => ({ready:!!scene,info:scene?.info,stats:scene?.stats,paused:scene?.paused});
-// The host copies the PKG into WebView2 shared memory before sending 'load'.
-// Register before 'boot' so the buffer cannot arrive without a listener.
-let pkgBufferResolve; const pkgBuffer=new Promise(resolve=>pkgBufferResolve=resolve);
-chrome.webview.addEventListener('sharedbufferreceived',e=>{ if(e.additionalData&&e.additionalData.type==='pkg') pkgBufferResolve(e.getBuffer()); });
-addEventListener('error',e=>send('error',e.message));
-addEventListener('unhandledrejection',e=>send('error',String(e.reason?.stack||e.reason)));
-chrome.webview.addEventListener('message',async e=>{
- if(e.data.type!=='load'||scene) return;
+// The host copies each PKG into WebView2 shared memory before sending 'load'
+// (id 0) or 'swap' (id n). Register before 'boot' so no buffer is missed.
+const buffers=new Map();
+const bufferSlot=id=>{let slot=buffers.get(id);if(!slot){let resolve;slot={promise:new Promise(r=>resolve=r)};slot.resolve=resolve;buffers.set(id,slot);}return slot;};
+chrome.webview.addEventListener('sharedbufferreceived',e=>{ const d=e.additionalData; if(d&&d.type==='pkg') bufferSlot(d.id||0).resolve(e.getBuffer()); });
+// While a swap is mounting, an uncaught error most likely comes from the new
+// scene: abort the swap instead of killing the wallpaper that is still playing.
+const fatal=message=>{ if(swapping){ const s=swapping; swapping=null; s.abort(message); } else send('error',message); };
+addEventListener('error',e=>fatal(e.message));
+addEventListener('unhandledrejection',e=>fatal(String(e.reason?.stack||e.reason)));
+const nextFrames=()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+function buildSource(data,id){
+ const base=data.mediaBase||'https://wallpaper.awall.local';
+ const source=WebWallGL.httpSource(base);
+ if(data.pkg){
+  source.sceneDir=async()=>null;
+  const fetchPkg=async signal=>{const r=await fetch(base+'/'+encodeURIComponent(data.pkg),{signal});if(!r.ok)throw Error('PKG 文件读取失败：'+r.status);return r.arrayBuffer();};
+  source.scenePkg=async signal=>{
+   if(data.buffered){
+    const buffer=await Promise.race([bufferSlot(id).promise,new Promise(resolve=>setTimeout(()=>resolve(null),10000))]);
+    buffers.delete(id);
+    if(buffer) return buffer;
+    send('diagnostic',{level:'info',message:'共享内存 PKG 未送达，回退到 fetch'});
+   }
+   return fetchPkg(signal);
+  };
+  const original=source.project;
+  source.project=async signal=>({...await original(signal),type:'scene',file:data.pkg});
+ }
+ return source;
+}
+const mountOptions=(source,onDiagnostic,onError)=>({
+ source,fit:'cover',fps:30,volume:0,renderDpr:1,scripts:true,audio:null,media:null,
+ mountTimeoutMs:45000,onDiagnostic,onError
+});
+async function load(data){
  try {
-  const source=WebWallGL.httpSource('https://wallpaper.awall.local');
-  if(e.data.pkg){
-   source.sceneDir=async()=>null;
-   const fetchPkg=async signal=>{const r=await fetch('https://wallpaper.awall.local/'+encodeURIComponent(e.data.pkg),{signal});if(!r.ok)throw Error('PKG 文件读取失败：'+r.status);return r.arrayBuffer();};
-   source.scenePkg=async signal=>{
-    if(e.data.buffered){
-     const buffer=await Promise.race([pkgBuffer,new Promise(resolve=>setTimeout(()=>resolve(null),10000))]);
-     if(buffer) return buffer;
-     send('diagnostic',{level:'info',message:'共享内存 PKG 未送达，回退到 fetch'});
-    }
-    return fetchPkg(signal);
-   };
-   const original=source.project;
-   source.project=async signal=>({...await original(signal),type:'scene',file:e.data.pkg});
-  }
-  scene=await WebWallGL.mount(document.querySelector('#stage'),{
-   source,
-   fit:'cover',fps:30,volume:0,renderDpr:1,scripts:true,audio:null,media:null,
-   mountTimeoutMs:45000,
-   onDiagnostic:(message,level)=>send('diagnostic',{message,level}),
-   onError:error=>{dead=true;document.querySelector('#error').textContent='场景渲染失败：'+error.message;send('error',String(error.stack||error));}
-  });
+  container=document.querySelector('#stage');
+  scene=await WebWallGL.mount(container,mountOptions(buildSource(data,0),
+   (message,level)=>send('diagnostic',{message,level}),
+   error=>{dead=true;document.querySelector('#error').textContent='场景渲染失败：'+error.message;send('error',String(error.stack||error));}));
   if(dead)return;
   // mount() produces a first frame; let it reach the compositor before
   // replacing the old native wallpaper window or applying a pending pause.
-  await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+  await nextFrames();
   if(dead)return;
   if(requestedPause)scene.pause();
   send('ready',{info:scene.info,stats:scene.stats});
  } catch(error) { document.querySelector('#error').textContent='场景加载失败：'+error.message;send('error',String(error.stack||error)); }
+}
+async function swap(data){
+ const id=data.id, layer=document.createElement('div');
+ layer.className='layer';document.body.insertBefore(layer,document.querySelector('#error'));
+ let next=null, live=false, failed=false;
+ const state={abort:message=>{ if(failed)return; failed=true; if(swapping===state) swapping=null; try{next&&next.destroy({releasePkgCache:true});}catch{} layer.remove(); send('swap-error',{id,message:String(message)}); }};
+ swapping=state;
+ try {
+  next=await WebWallGL.mount(layer,mountOptions(buildSource(data,id),
+   (message,level)=>send('diagnostic',live?{message,level}:{message,level,swap:true}),
+   error=>{ if(!live){ state.abort(error.message); return; } dead=true;document.querySelector('#error').textContent='场景渲染失败：'+error.message;send('error',String(error.stack||error)); }));
+  if(failed){ try{next.destroy({releasePkgCache:true});}catch{} return; }
+  await nextFrames();
+  if(failed)return;
+  if(requestedPause)next.pause();
+  swapping=null;
+  // Crossfade inside the page, then retire the old instance.
+  layer.style.opacity='1';
+  await new Promise(resolve=>setTimeout(resolve,380));
+  const old=scene, oldContainer=container;
+  scene=next;container=layer;live=true;
+  try{old&&old.destroy({releasePkgCache:true});}catch{}
+  if(oldContainer){ if(oldContainer.id==='stage') oldContainer.replaceChildren(); else oldContainer.remove(); }
+  send('swapped',{id,info:scene.info,stats:scene.stats});
+ } catch(error) { if(swapping===state) swapping=null; state.abort(error&&error.message||String(error)); }
+}
+chrome.webview.addEventListener('message',e=>{
+ if(e.data.type==='load'&&!scene) load(e.data);
+ else if(e.data.type==='swap'&&scene&&!swapping) swap(e.data);
+ else if(e.data.type==='swap'&&e.data.id!=null) send('swap-error',{id:e.data.id,message:'页面忙或尚未就绪'});
 });
 send('boot',{});
 </script></body></html>

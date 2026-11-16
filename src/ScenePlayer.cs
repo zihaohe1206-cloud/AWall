@@ -27,6 +27,53 @@ public sealed class ScenePlayer : IDisposable {
  // loads index.html and the engine script, then waits at "boot" until Assign().
  public bool Standby {get {return item==null;}}
  bool booted,mediaMapped; CoreWebView2 bootCore;
+ // In-page scene swap: the next scene mounts in a second layer of the same
+ // page while the current one keeps playing, then crossfades and the old
+ // instance is destroyed. No new browser process, page load or cover capture.
+ string mediaHost=MediaHost; int swapId; Item swapItem; string swapHost; CoreWebView2SharedBuffer swapBuffer;
+ TaskCompletionSource<bool> swapTcs; public string LastSwapError="";
+ public bool CanSwap {get {return !disposed&&Ready&&!Failed&&item!=null&&!IsVideo&&bootCore!=null&&swapTcs==null;}}
+ void WriteTo(Item target,string line){try{File.AppendAllText(LogPath(target),DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss.fff")+" "+line+Environment.NewLine);}catch{}}
+ void EndSwap(TaskCompletionSource<bool> tcs,bool ok,string error){
+  if(tcs==null||swapTcs!=tcs)return;
+  if(!ok){LastSwapError=error??"未知错误";if(swapItem!=null)WriteTo(swapItem,"SWAP failed "+LastSwapError);
+   if(swapHost!=null&&View.CoreWebView2!=null)try{View.CoreWebView2.ClearVirtualHostNameToFolderMapping(swapHost);}catch{}
+   if(swapBuffer!=null)try{swapBuffer.Dispose();}catch{}}
+  swapBuffer=null;swapHost=null;swapItem=null;swapTcs=null;tcs.TrySetResult(ok);
+ }
+ public async Task<bool> Swap(Item next){
+  if(!CanSwap||next==null||next.Type!="scene")return false;
+  var core=bootCore;int id=++swapId;var tcs=new TaskCompletionSource<bool>();swapTcs=tcs;swapItem=next;LastSwapError="";
+  string host="w"+id+"."+AppHost;swapHost=host;
+  bool pkg=Path.GetExtension(next.File).Equals(".pkg",StringComparison.OrdinalIgnoreCase);
+  WriteTo(next,"SWAP start id="+id+" from "+item.File);
+  try{
+   core.SetVirtualHostNameToFolderMapping(host,Path.GetDirectoryName(next.File),CoreWebView2HostResourceAccessKind.Allow);
+   bool buffered=false;
+   if(pkg){try{
+     var buffer=await CopyPkg(core,next.File,null);
+     if(buffer!=null){if(swapTcs!=tcs||disposed){buffer.Dispose();return false;}
+      core.PostSharedBufferToScript(buffer,CoreWebView2SharedBufferAccess.ReadWrite,"{\"type\":\"pkg\",\"id\":"+id+"}");swapBuffer=buffer;buffered=true;}
+    }catch(Exception ex){WriteTo(next,"PKGBUFFER fallback "+ex.Message);}}
+   if(disposed||swapTcs!=tcs)return false;
+   core.PostWebMessageAsJson(new JavaScriptSerializer().Serialize(new{type="swap",id=id,pkg=pkg?Path.GetFileName(next.File):null,buffered=buffered,mediaBase="https://"+host}));
+  }catch(Exception ex){EndSwap(tcs,false,ex.Message);return false;}
+  if(await Task.WhenAny(tcs.Task,Task.Delay(60000))!=tcs.Task)EndSwap(tcs,false,"同页切换超时");
+  return tcs.Task.IsCompleted&&tcs.Task.Result;
+ }
+ void SwapMessage(string type,object val){
+  var d=val as Dictionary<string,object>;if(d==null||!d.ContainsKey("id"))return;
+  int id=Convert.ToInt32(d["id"]);if(swapTcs==null||id!=swapId)return;var tcs=swapTcs;
+  if(type=="swap-error"){EndSwap(tcs,false,d.ContainsKey("message")?Convert.ToString(d["message"]):"");return;}
+  // swapped: the page has crossfaded and destroyed the old scene.
+  string oldHost=mediaHost;var oldBuffer=pkgBuffer;
+  item=swapItem;log=LogPath(item);mediaHost=swapHost;pkgBuffer=swapBuffer;
+  warnings.Clear();Warnings=0;ReadyInfo=new JavaScriptSerializer().Serialize(d.ContainsKey("info")?d["info"]:null);
+  if(oldBuffer!=null)try{oldBuffer.Dispose();}catch{}
+  if(oldHost!=null&&View.CoreWebView2!=null)try{View.CoreWebView2.ClearVirtualHostNameToFolderMapping(oldHost);}catch{}
+  Write("SWAPPED id="+id+" "+ReadyInfo);
+  swapBuffer=null;swapHost=null;swapItem=null;swapTcs=null;tcs.TrySetResult(true);
+ }
  string Kind {get {return IsVideo?"MP4":"PKG";}}
  const string AppHost="awall.local", MediaHost="wallpaper.awall.local";
  const string Assets="E:\\Steam\\steamapps\\common\\wallpaper_engine\\assets";
@@ -103,7 +150,7 @@ public sealed class ScenePlayer : IDisposable {
  void Resource(object s,CoreWebView2WebResourceRequestedEventArgs e){
   try{
    var uri=new Uri(e.Request.Uri);
-   if(uri.Scheme=="https"&&(uri.Host==AppHost||uri.Host==MediaHost)){
+   if(uri.Scheme=="https"&&(uri.Host==AppHost||uri.Host.EndsWith("."+AppHost,StringComparison.OrdinalIgnoreCase))){
     if(uri.Host!=AppHost||!uri.AbsolutePath.StartsWith("/api/local-assets"))return;
     string rel=Uri.UnescapeDataString(uri.AbsolutePath.Substring("/api/local-assets".Length)).TrimStart('/');
     if(rel==""){Json(e,new{ok=Directory.Exists(Assets),roots=new[]{new{id="we",dir="local"}}});return;}
@@ -162,7 +209,9 @@ public sealed class ScenePlayer : IDisposable {
      string type=Convert.ToString(msg["type"]);object val=msg.ContainsKey("value")?msg["value"]:null;
      if(type=="boot"){if(booted)return;booted=true;bootCore=core;Write("BOOT"+(item==null?" standby":""));if(item!=null)SendLoad(core);}
      else if(type=="ready"){if(Ready||Failed)return;Ready=true;ReadyInfo=new JavaScriptSerializer().Serialize(val);if(paused.HasValue)Pause(paused.Value);Write("READY "+ReadyInfo);if(Report!=null)Report(IsVideo?"MP4 首帧已就绪。":"PKG 首帧已就绪；诊断警告 "+Warnings+" 条。");}
+     else if(type=="swapped"||type=="swap-error")SwapMessage(type,val);
      else if(type=="error")Fail(Convert.ToString(val));
+     else if(type=="diagnostic"&&swapItem!=null&&(val as Dictionary<string,object>)!=null&&(val as Dictionary<string,object>).ContainsKey("swap")){var sd=(Dictionary<string,object>)val;WriteTo(swapItem,Convert.ToString(sd["level"])+" "+Convert.ToString(sd["message"]));}
      else if(type=="diagnostic"){var d=val as Dictionary<string,object>;string level=Convert.ToString(d["level"]);string message=Convert.ToString(d["message"]);if(level=="warn"){if(!warnings.Add(message))return;Warnings=warnings.Count;if(Report!=null)Report("PKG 兼容性警告 "+Warnings+" 条："+message);}Write(level+" "+message);}
     }catch(Exception ex){Write("MESSAGE "+ex.Message);}
    };
@@ -183,15 +232,25 @@ public sealed class ScenePlayer : IDisposable {
   catch(Exception ex){Write("LOAD "+ex.Message);}
  }
  async Task<bool> PostPkgBuffer(CoreWebView2 core){
-  long length=new FileInfo(item.File).Length;
-  if(length<=0||length>int.MaxValue)return false;
   var clock=Stopwatch.StartNew();
-  if(pkgWarm!=null)try{await pkgWarm;}catch{}
-  if(disposed)return false;
-  long warmMs=clock.ElapsedMilliseconds;
+  var buffer=await CopyPkg(core,item.File,pkgWarm);
+  if(buffer==null)return false;
+  if(disposed){buffer.Dispose();return false;}
+  try{core.PostSharedBufferToScript(buffer,CoreWebView2SharedBufferAccess.ReadWrite,"{\"type\":\"pkg\",\"id\":0}");}
+  catch{buffer.Dispose();throw;}
+  pkgBuffer=buffer;
+  Write("PKGBUFFER "+buffer.Size+" bytes total="+clock.ElapsedMilliseconds+"ms");
+  return true;
+ }
+ // Copy a PKG into a new WebView2 shared buffer off the UI thread.
+ async Task<CoreWebView2SharedBuffer> CopyPkg(CoreWebView2 core,string file,Task warm){
+  long length=new FileInfo(file).Length;
+  if(length<=0||length>int.MaxValue)return null;
+  if(warm!=null)try{await warm;}catch{}
+  if(disposed)return null;
   var buffer=core.Environment.CreateSharedBuffer((ulong)length);
   try{
-   IntPtr target=buffer.Buffer;string file=item.File;
+   IntPtr target=buffer.Buffer;
    long copied=await Task.Run(delegate{
     long offset=0;var chunk=new byte[1<<20];
     using(var f=new FileStream(file,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete,1<<16,FileOptions.SequentialScan)){
@@ -199,12 +258,9 @@ public sealed class ScenePlayer : IDisposable {
     }
     return offset;
    });
-   if(disposed)return false;
+   if(disposed)return null;
    if(copied!=length)throw new IOException("PKG 读取长度不一致："+copied+"/"+length);
-   core.PostSharedBufferToScript(buffer,CoreWebView2SharedBufferAccess.ReadWrite,"{\"type\":\"pkg\"}");
-   pkgBuffer=buffer;buffer=null;
-   Write("PKGBUFFER "+length+" bytes warm="+warmMs+"ms total="+clock.ElapsedMilliseconds+"ms");
-   return true;
+   var result=buffer;buffer=null;return result;
   }finally{if(buffer!=null)try{buffer.Dispose();}catch{}}
  }
  void Fail(string message){if(disposed)return;Failed=true;Ready=false;LastError=message;Write("ERROR "+message);if(Report!=null)Report(Kind+" 加载失败："+message);}
@@ -234,6 +290,6 @@ public sealed class ScenePlayer : IDisposable {
  public async Task SeekNearEnd(){if(mpv!=null){await mpv.SeekNearEnd();return;}await View.CoreWebView2.ExecuteScriptAsync("video.currentTime=Math.max(0,video.duration-0.2)");}
  public async Task<string> Stats(){if(mpv!=null)return await mpv.Stats();return View.CoreWebView2==null?"null":await View.CoreWebView2.ExecuteScriptAsync("window.awallStats && window.awallStats()");}
 
- public void Dispose(){if(disposed)return;disposed=true;Ready=false;Report=null;closed.TrySetResult(true);try{if(mpv!=null)mpv.Dispose();View.Dispose();if(pkgBuffer!=null)try{pkgBuffer.Dispose();}catch{}}finally{activeProfiles.Remove(profile);}}
+ public void Dispose(){if(disposed)return;disposed=true;Ready=false;Report=null;closed.TrySetResult(true);if(swapTcs!=null){var t=swapTcs;swapTcs=null;t.TrySetResult(false);}try{if(mpv!=null)mpv.Dispose();View.Dispose();if(pkgBuffer!=null)try{pkgBuffer.Dispose();}catch{}if(swapBuffer!=null)try{swapBuffer.Dispose();}catch{}}finally{activeProfiles.Remove(profile);}}
 }
 }
