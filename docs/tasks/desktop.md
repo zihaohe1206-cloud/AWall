@@ -2,9 +2,9 @@
 
 ## 状态
 
-- 阶段：路线图第 2 步 · 代码已写，待编译和回归（第 1 步已完成）
+- 阶段：路线图第 2 步 · 自动回归已通过，待手动回归（第 1 步已完成）
 - 已完成：分层目录、命令表、桌面模型（层 / 块 / 场景 / 呈现策略）、系统壁纸接口，已写入 [架构文档](../ARCHITECTURE.md)
-- 第 2 步：播放、轮播、布局逻辑已移到 `Features/Wallpaper/WallpaperService`（三个 partial 文件），主窗口只调用它的方法、订阅它的事件。**尚未编译，也未跑回归**，见下方“验证”
+- 第 2 步：播放、轮播、布局逻辑已移到 `Features/Wallpaper/WallpaperService`（三个 partial 文件），主窗口只调用它的方法、订阅它的事件。编译和 `--test-transitions`、`--test-library` 已通过，**手动回归未做**，见下方“验证”
 - 已定（2026-11-19，用户授权按建议决定）：
   - 揭开的默认快捷键：`Ctrl+Alt+Space`，可在设置中改
   - “不接管资源管理器、默认不移动用户文件”定为架构约定（已写入架构文档）；第一版规则分区不提供“真的移动文件”的开关
@@ -157,3 +157,10 @@
 4. 手动：设壁纸、暂停 / 继续、托盘“下一张”、轮播开关、重启 AWall 后恢复布局、多屏“应用到”。
 
 结果（2026-11-19 第一轮）：编译通过；`--test-library` 33 项全部通过；`--test-transitions` 前 3 项通过，PKG→视频失败。原因与重构无关：内置 MP4 播放器复用了刚释放的 WebView2 配置目录，旧浏览器进程未退出时报 0x8007139F。已改为等 `BrowserProcessExited`（最多 15 秒）再释放目录（`Render/ScenePlayer.cs`），待第二轮验证。
+
+结果（2026-11-19 第二轮，干净 worktree）：
+
+- 编译：先失败，`WeCandidate` 找不到。原因是 `.gitignore` 的 `library/` 在 Windows 上不区分大小写，把 `src/Core/Library/`（`Item.cs`、`LibraryScanner.cs`、`WeImport.cs`）一起忽略了，这三个文件从未入库，第一轮能编译只是因为主目录里有本地文件。规则改为 `/library/` 并补交这三个文件后，编译通过（两个既有警告）。
+- `--test-transitions`：`success: true`，11 项全部通过，包括第一轮失败的 `scene-to-video`。
+- `--test-library`：33 项全部通过，`frameChanged` 33 项，警告 0，与第一轮逐项一致；各类型平均内存、CPU 与第一轮差别在采样波动内。
+- 手动回归（第 4 条）：未做。

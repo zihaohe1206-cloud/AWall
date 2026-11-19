@@ -12,4 +12,4 @@ vendor/mpv/*.dll
 build.log
 
 # Local wallpaper library and shared assets; never commit.
-library/
+/library/
