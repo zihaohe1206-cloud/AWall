@@ -4,7 +4,7 @@
 
 - 阶段：第 5 步（块宿主）拆成 5.1–5.5（见路线图）。5.1“桌面层基础”已实现，并通过自动验证；第 3、4、5.1 步都**待用户验收**
 - 5.1：三个实验已做完。实现了 `AboveIcons` 挂载到 DefView（`DesktopHost.AttachAboveIcons` / `Reveal`、`Features/Desktop/BlockWindow`）、图标显隐（`Platform/DesktopIcons`，命令 `desktop.icons`，托盘菜单项）和 `--test-desktop` 自检，约定已写入[架构文档](../ARCHITECTURE.md#aboveicons-层与图标显隐)
-- 待用户决定：子窗口里的网页块不能透明，原计划“`BelowIcons` 块合成到一个共享透明页面”走不通，建议改成“画进壁纸页面”，见路线图 5.4
+- 已定（2026-11-20，用户确认）：子窗口里的网页块不能透明，`BelowIcons` 装饰块不另开共享透明页面，改为画进壁纸本身，见路线图 5.4
 - 第 4 步：素材库支持图片；HTML 用 `<meta name="awall-present">` 声明静态 / 定时；每块屏独立选呈现档（实时 / 系统壁纸 / 快照）。实现在 `Features/Wallpaper/WallpaperService.Static.cs`、`WebPresent.cs`，约定已写入[架构文档](../ARCHITECTURE.md#2-能静则静三档呈现)
 - 第 3 步：`App/CommandPipe.cs`（管道服务端、客户端、命令行前端）+ 控制台程序 `AWallCmd.exe`；约定已写入[架构文档](../ARCHITECTURE.md#对外入口命令管道与命令行)，用法写入 README
 - 已完成（第 1 步）：分层目录、命令表、桌面模型（层 / 块 / 场景 / 呈现策略）、系统壁纸接口，已写入 [架构文档](../ARCHITECTURE.md)
@@ -44,7 +44,7 @@
 | 层 | 父窗口 | 能否点击 | 说明 |
 |---|---|---|---|
 | `Wallpaper` | WorkerW（现有 `DesktopHost`） | 否 | 现有播放器 |
-| `BelowIcons` | WorkerW，排在壁纸窗口之上 | 否，点击落到桌面 | 装饰类块，和壁纸一起被图标盖住 |
+| `BelowIcons` | 不单独开窗口，画进壁纸（见路线图 5.4） | 否，点击落到桌面 | 装饰类块，和壁纸一起被图标盖住 |
 | （图标） | 资源管理器的 `SysListView32` | 是 | 不归 AWall 管，AWall 只控制显隐 |
 | `AboveIcons` | `SHELLDLL_DefView` 的子窗口 | 是 | 在图标之上、所有应用窗口之下；Win+D 不会把它隐藏。DeskFrame 用的就是这种挂法 |
 | 揭开（临时） | 暂时脱离 DefView 并置顶 | 是 | 见下方“揭开” |
@@ -151,12 +151,11 @@
        - `--test-desktop` 自检。
     2. 分区：规则 / 文件夹 / 自由三种；读图标、监听文件夹；双击、拖放、重命名；原生右键菜单（`ShellContextMenu`）；块布局存盘；Explorer 重启后重新挂载。
     3. 鼠标钩子：双击桌面空白处隐藏图标和分区；按壁纸取色，分区配色跟着换壁纸过渡。
-    4. `BelowIcons` 装饰块。实验 3 证明子窗口里的网页做不了透明，所以**建议**不另开共享页面，而是把块画进壁纸本身：
+    4. `BelowIcons` 装饰块。实验 3 证明子窗口里的网页做不了透明，所以不另开共享页面，把块画进壁纸本身（2026-11-20 用户确认）：
        - 实时壁纸本来就是 WebView2 页面（视频、PKG、HTML），块作为叠加层注入；
        - 静态 / 快照档把块合成进系统壁纸图片；
        - mpv 后端没有页面，不支持装饰块。
 
-       这条改变了原计划，**等用户决定**。
     5. 编辑模式（网格、拖动吸附、块库）、资源管理器右键菜单项“编辑桌面（AWall）”。
     - 验收：Explorer 重启和异常退出后桌面完好；只有分区时 CPU 接近 0。
 6. 数据源与场景：先接 `time` / `theme` / `sys` / `idle` / `folder`，再接 `media` / `audio`；场景切换（轮播改为场景内只换壁纸）、待机场景、揭开。
@@ -229,7 +228,7 @@
     - 透明背景：透明处是黑色 `#000000`。
     - 子窗口加 `WS_EX_LAYERED` 颜色键：`SetLayeredWindowAttributes` 返回 87，透明处是 WPF 背景色 `#010203`。
 
-    结论和建议见路线图 5.4。
+    结论见路线图 5.4（已按建议改，用户已确认）。
   - **图标**：隐藏后再恢复；模拟崩溃后启动时自动恢复；用户自己在资源管理器里关掉图标时，`Restore` 不会去打开。
 - 命令行：`desktop.icons visible=off` / 不带参数切换 / `visible=maybe`（失败，退出码 1）都符合预期。先隐藏、再 `app.exit`，图标恢复，标记文件已删除。
 - 未验证（桌面被全屏游戏挡住，自检自动跳过，也没有切换“显示桌面”）：
@@ -241,4 +240,3 @@
 待用户验收：
 1. 关掉全屏程序后运行 `.\bin\AWall.exe --test-desktop`，`desktop-test.json` 里应多出 `screen.*` 和 `win+d.*` 几项，且 `success` 为 `true`。
 2. 在托盘菜单里试“隐藏桌面图标 / 显示桌面图标”。
-3. 对 5.4 的方向做决定。
