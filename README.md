@@ -48,6 +48,18 @@ AWall 是 Windows 动态桌面壁纸工具，支持 MP4、Wallpaper Engine 的 P
 
 在主界面可以开启轮播、设置顺序和间隔、开启登录时启动，或切换浅色、深色和跟随系统。轮播列表为空时使用整个素材库。手动切换会重新计时，暂停、锁屏或被全屏窗口遮挡时会延后轮播。开机启动默认关闭。
 
+### 命令行控制
+
+AWall 运行时，可以用 `bin/AWallCmd.exe` 从终端、脚本或 agent 执行和按钮相同的命令（命令表见[架构文档](docs/ARCHITECTURE.md#6-命令层)）：
+
+```powershell
+.\bin\AWallCmd.exe help
+.\bin\AWallCmd.exe wallpaper.status
+.\bin\AWallCmd.exe wallpaper.apply file=三维点阵海浪 display=1
+```
+
+`--json` 输出完整 JSON（中文转义为 `\uXXXX`，适合脚本）；Git Bash 等 UTF-8 终端加 `--utf8`。退出码：0 成功，1 命令失败，2 AWall 未运行，64 用法错误。`AWall.exe --cmd <命令> ...` 效果相同，但它是窗口程序，PowerShell 和 cmd 不会等它结束，只适合输出被重定向的场合。
+
 ### 素材与兼容性
 
 本地素材库位于 `library/wallpapers/`，下设 `mp4/`、`pkg/` 和 `html/`。可放置同名 `.jpg`、`.gif` 或 `.png` 作为预览图，PKG 可附带同名 `.json` 保存原 `project.json`。旧版 `library/wallpaper-engine/` 结构可用 `tools/Migrate-Library.ps1` 整理，默认预览，加 `-Apply` 才执行。
@@ -85,7 +97,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 
 | 路径 | 内容 |
 | --- | --- |
-| `src/App/`、`src/Core/` | 进程入口、路径、命令、素材库、设置和布局模型 |
+| `src/App/`、`src/Core/` | 进程入口、路径、命令与命令管道、素材库、设置和布局模型 |
+| `src/Cli/` | 命令行前端 `AWallCmd.exe` 的入口（单独编译） |
 | `src/Platform/`、`src/Render/` | Windows 桌面挂载和系统设置、播放器、切换遮罩及 `src/Render/scene/` 页面资源 |
 | `src/Features/`、`src/UI/` | 壁纸参数、桌面美化模型、主窗口、托盘等界面 |
 | `src/Diagnostics/` | 自检和资源采样 |
@@ -95,4 +108,4 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 
 `build.ps1` 编译上述 `src/` 分层目录中的 C# 文件，并复制 `src/Render/scene/` 的页面资源。`src/` 顶层还留有重构前的副本，日常开发请修改对应的分层文件。
 
-应用设置、布局和运行日志位于 `%LOCALAPPDATA%\AWall`。切换时序见 `transitions.log`，命令执行见 `commands.log`，场景及网页诊断分别见 `scene-*.log` 和 `web-*.log`。
+应用设置、布局和运行日志位于 `%LOCALAPPDATA%\AWall`。切换时序见 `transitions.log`，命令执行见 `commands.log`（命令管道自身的错误见 `command-pipe.log`），场景及网页诊断分别见 `scene-*.log` 和 `web-*.log`。

@@ -90,7 +90,7 @@ App ──► UI ──► Features ──► Render / Platform ──► Core
 
 | 层 | 目录 | 负责 | 不允许 |
 |---|---|---|---|
-| App | `src/App` | 进程入口、单实例、路径（`Program`、`AppPaths`、`AWall.manifest`） | 业务逻辑 |
+| App | `src/App` | 进程入口、单实例、路径、对外命令入口（`Program`、`AppPaths`、`CommandPipe`、`AWall.manifest`）；`src/Cli` 是单独编译的 `AWallCmd.exe` 入口 | 业务逻辑 |
 | Core | `src/Core` | 纯数据与规则：素材模型与扫描（`Item`、`LibraryScanner`、`WeImport`）、设置（`AppSettings`）、布局模型（`SavedLayout`）、命令总线（`CommandBus`） | 引用 UI、Render、Platform；调用 Windows 窗口 API |
 | Platform | `src/Platform` | Windows 相关能力：桌面宿主挂载（`DesktopHost`）、Win32 声明（`Native`）、系统壁纸（`SystemWallpaper`）、开机启动（`Autostart`）、锁屏（`LockScreen` + `Set-LockImage.ps1`）、系统静态背景截图（`StartupBackdrop`） | 引用 UI |
 | Render | `src/Render` | 产生像素：WebView2 场景宿主（`ScenePlayer` + `scene/`）、mpv（`MpvPlayer`）、桌面播放窗口（`Player`）、切换遮罩（`TransitionCover`）、CDN 缓存（`WebCdn`） | 引用 UI |
@@ -132,4 +132,13 @@ App ──► UI ──► Features ──► Render / Platform ──► Core
 | `autostart.set` | `on=on\|off` | 开机自动启动 |
 | `system-wallpaper.set` | `file=<图片> [display=all\|1..n]` | 静态档：设为 Windows 系统壁纸，AWall 不参与渲染 |
 
-对外开放（named pipe、`--cmd` 命令行、MCP）尚未实现，计划见[任务页](tasks/desktop.md)。
+### 对外入口：命令管道与命令行
+
+外部程序通过本地 named pipe 调用同一张命令表（`App/CommandPipe.cs`）：
+
+- **管道**：`\\.\pipe\AWall.Cmd.S<会话号>`，只在拥有单实例互斥量的正式实例里开启（自检模式不开）。访问控制只允许当前用户，拒绝网络登录。
+- **协议**：一次连接一个请求。客户端写一行 UTF-8 JSON `{"command":"wallpaper.apply","args":{"file":"...","display":"2"}}`，服务端回一行 `{"ok":true,"message":"...","data":...}`。请求最长 65536 字符；参数值一律转成字符串。
+- **执行**：管道线程收到请求后用 `Dispatcher.Invoke` 切到 UI 线程执行命令并序列化结果，最长等 30 秒，超时回“AWall 正忙”。执行同样记入 `commands.log`；管道自身的错误记入 `command-pipe.log`。
+- **命令行**：`CommandLine.Run` 是唯一的命令行实现，有两个入口：控制台程序 `AWallCmd.exe`（`src/Cli/`，由 `build.ps1` 单独编译，只带 `CommandPipe.cs`、`AppPaths.cs`、`CommandBus.cs`）和 `AWall.exe --cmd`（窗口程序，先附着调用方的控制台；PowerShell / cmd 不等待窗口程序，所以终端里用 `AWallCmd.exe`）。
+
+MCP 桥接尚未实现，见[任务页](tasks/desktop.md)路线图第 7 步。

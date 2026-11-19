@@ -2,7 +2,8 @@
 
 ## 状态
 
-- 阶段：路线图第 2 步已完成，下一步是第 3 步（named pipe + `--cmd` 命令行）
+- 阶段：路线图第 3 步（named pipe + `--cmd` 命令行）已实现并通过自动验证，**待用户验收**；之后是第 4 步
+- 第 3 步：`App/CommandPipe.cs`（管道服务端、客户端、命令行前端）+ 控制台程序 `AWallCmd.exe`；约定已写入[架构文档](../ARCHITECTURE.md#对外入口命令管道与命令行)，用法写入 README
 - 已完成（第 1 步）：分层目录、命令表、桌面模型（层 / 块 / 场景 / 呈现策略）、系统壁纸接口，已写入 [架构文档](../ARCHITECTURE.md)
 - 第 2 步：播放、轮播、布局逻辑已移到 `Features/Wallpaper/WallpaperService`（三个 partial 文件），主窗口只调用它的方法、订阅它的事件。自动回归和手动回归均已通过（多屏未测），见下方“验证”
 - 已定（2026-11-19，用户授权按建议决定）：
@@ -108,6 +109,8 @@
 
 顺序：本地 named pipe → `AWall.exe --cmd <命令> key=value`（第二个实例把命令转给正在运行的实例并打印结果）→ 在 CLI 外面包一层 MCP server。有了 CLI，agent 用 shell 就能控制 AWall；MCP 只是翻译层。
 
+前两项已实现（第 3 步）：另加了控制台程序 `AWallCmd.exe`，因为 PowerShell / cmd 不等待窗口程序 `AWall.exe` 结束，直接在终端里跑 `--cmd` 时输出会落在提示符之后。
+
 ## 代码落点与参考代码
 
 参考代码在本地 `research/desktop-refs/`（Git 忽略，索引见其中的 `INDEX.md`）。只从两个 MIT 项目借代码，借用时在 `THIRD-PARTY-NOTICES.md` 加署名，并改写成 C# 5；Lively 是 GPL-3.0，只看思路，用到的地方自己重写。
@@ -135,7 +138,7 @@
 
 1. ✅ 分层目录、命令表、桌面模型（层 / 块 / 场景 / 呈现策略）、系统壁纸接口。
 2. ✅ 把播放控制器抽成 `WallpaperService`（每一步都跑 `--test-transitions` 和 `--test-library` 回归）。
-3. named pipe + `--cmd` 命令行。
+3. named pipe + `--cmd` 命令行。已实现，待用户验收。
 4. 接通静态档和快照档：素材库支持图片类型；`present=interval` 的 HTML 定时离屏渲染并设成系统壁纸；按屏混合呈现。
 5. 块宿主：先做三个小实验（挂到 DefView、带 WebView2 的窗口换父、HTML 块透明背景）；`AboveIcons` 挂到 DefView；分区（规则 / 文件夹 / 自由）、图标显隐与双击隐藏、原生右键菜单、按壁纸取色；`BelowIcons` 的块合成到一个共享 WebView2 页面；编辑模式；资源管理器右键菜单项；`--test-desktop` 自检。
     - 验收：Explorer 重启和异常退出后桌面完好；只有分区时 CPU 接近 0。
@@ -164,3 +167,18 @@
 - `--test-transitions`：`success: true`，11 项全部通过，包括第一轮失败的 `scene-to-video`。
 - `--test-library`：33 项全部通过，`frameChanged` 33 项，警告 0，与第一轮逐项一致；各类型平均内存、CPU 与第一轮差别在采样波动内。
 - 手动回归（第 4 条）：用户验收通过（设壁纸与 MP4/PKG/HTML 切换、暂停 / 继续、托盘“下一张”、轮播与全屏延后、重启恢复布局、停止壁纸、托盘唤出）。只有一块显示器，多屏“应用到”未测，接上第二块屏后补测。
+
+### 第 3 步：命令管道与命令行（待用户验收）
+
+结果（2026-11-19，单显示器）：
+
+- 编译：`build-and-log.cmd` 通过，`bin\AWall.exe` 和 `bin\AWallCmd.exe` 都生成，只有两个既有警告。
+- AWall 未运行：`AWallCmd wallpaper.status` 打印“没有在运行”，退出码 2；不带参数打印用法，退出码 64。
+- AWall 运行时（PowerShell）：`help` 列出 16 个命令；`wallpaper.status` 人读输出与 `--json` 一致；`wallpaper.pause` / `resume` 生效，状态里 `paused` 随之变化；未知命令、`rotation.set minutes=7`、不存在的素材都返回失败、退出码 1；多余的非 `key=value` 参数退出码 64。
+- `AWall.exe --cmd wallpaper.status --json` 在输出被重定向时结果与 `AWallCmd` 相同。
+- Git Bash：默认输出按控制台代码页（GBK）编码，在 UTF-8 终端里中文乱码，所以加了 `--utf8`，加上后显示正常；`--json` 全是 ASCII，不受影响。8 个并发请求全部成功（`commands.log` 中同一秒 8 条 `wallpaper.status -> ok`）。
+- 直接写管道：非法 JSON、缺少 `command`、超过 65536 字符的请求都返回 `ok:false` 和原因；数字参数按字符串传入。
+- `app.exit` 通过命令行发出时仍能收到“正在退出。”，随后进程退出。
+- `--test-transitions`：`success: true`，11 项全部通过（自检模式不开管道）。
+
+待用户验收：在自己的终端里试几条命令（例如 `.\bin\AWallCmd.exe help`、`wallpaper.next`、`app.show`），确认 `app.show` 能把窗口带到前台。

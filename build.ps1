@@ -24,6 +24,11 @@ if ($stale.Count -gt 0) {
 
 & "$fx\csc.exe" /nologo /target:winexe /platform:x64 /win32manifest:"$src\App\AWall.manifest" /win32icon:"$root\assets\AWall.ico" /out:"$output\AWall.exe" /reference:"$fx\WPF\PresentationFramework.dll" /reference:"$fx\WPF\PresentationCore.dll" /reference:"$fx\WPF\WindowsBase.dll" /reference:System.Xaml.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll /reference:System.Net.Http.dll /reference:"$root\vendor\webview2\Microsoft.Web.WebView2.Core.dll" /reference:"$root\vendor\webview2\Microsoft.Web.WebView2.Wpf.dll" $sources
 if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+# AWallCmd.exe: console front end for the command pipe (AWall.exe --cmd does the same, but as a GUI exe
+# PowerShell and cmd do not wait for it). src\Cli is not a layer, so it is not compiled into AWall.exe.
+$cliSources = "$src\Cli\AWallCmd.cs", "$src\App\CommandPipe.cs", "$src\App\AppPaths.cs", "$src\Core\Commands\CommandBus.cs"
+& "$fx\csc.exe" /nologo /target:exe /platform:x64 /win32icon:"$root\assets\AWall.ico" /out:"$output\AWallCmd.exe" /reference:System.Web.Extensions.dll /reference:System.Core.dll $cliSources
+if ($LASTEXITCODE -ne 0) { throw 'AWallCmd build failed' }
 Copy-Item -LiteralPath "$root\assets\AWall.ico" -Destination "$output\AWall.ico" -Force
 Copy-Item -LiteralPath "$src\Platform\Set-LockImage.ps1" -Destination "$output\Set-LockImage.ps1" -Force
 Copy-Item "$root\vendor\webview2\*.dll" -Destination "$output" -Force
