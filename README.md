@@ -48,6 +48,15 @@ AWall 是 Windows 动态桌面壁纸工具，支持 MP4、Wallpaper Engine 的 P
 
 在主界面可以开启轮播、设置顺序和间隔、开启登录时启动，或切换浅色、深色和跟随系统。轮播列表为空时使用整个素材库。手动切换会重新计时，暂停、锁屏或被全屏窗口遮挡时会延后轮播。开机启动默认关闭。
 
+### 桌面分区
+
+托盘菜单“桌面分区”可以新建三种分区：规则分区（图片、文档、影音、压缩包、程序、文件夹、今天新建），自由分区，以及文件夹分区（实时显示任意文件夹的内容）。分区只是视图，AWall 不会为了分区移动桌面上的文件。
+
+- **桌面接管**：存在规则或自由分区时，AWall 会隐藏系统图标，没归入任何分区的项目（包括回收站等系统图标）放进“其他”分区。删除最后一个规则 / 自由分区，或者退出 AWall，系统图标就恢复。
+- **分区里的项目**：用法和资源管理器一样：单击选中（Ctrl / Shift 多选），双击或 Enter 打开，右键弹出系统菜单，F2 重命名，Delete 移入回收站。可以拖到其他程序里；从别处拖进来的文件放到桌面，拖进文件夹分区的文件放到那个文件夹。在自由分区里拖动可以调整顺序。
+- **布局**：分区默认锁定。在标题栏右键选“解锁布局”后，拖动标题栏移动分区，拖右下角改大小。双击标题栏收起或展开。布局保存在 `%LOCALAPPDATA%\AWall\fences.json`。
+- 命令行用 `fence.*` 系列命令，例如 `AWallCmd fence.add kind=rule preset=images`。
+
 ### 命令行控制
 
 AWall 运行时，可以用 `bin/AWallCmd.exe` 从终端、脚本或 agent 执行和按钮相同的命令（命令表见[架构文档](docs/ARCHITECTURE.md#6-命令层)）：
@@ -93,6 +102,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 | `.\bin\AWall.exe --self-test` | 基本播放、截图和短时资源采样 | `selftest.txt`、`test-frame.jpg` |
 | `.\bin\AWall.exe --test-library` | 逐个检查支持的素材，记录画面、帧率和资源占用 | `compatibility/results.json`、`compatibility/perf-summary.txt`、`compatibility/perf-summary.json` |
 | `.\bin\AWall.exe --test-transitions` | 使用素材库中的 MP4 和 PKG 验证切换、失败回滚和布局恢复，各需至少一项 | `transition-test.json` |
+| `.\bin\AWall.exe --test-fences` | 分区：规则归类、存盘、文件夹分区的显示 / 监听 / 重命名、系统菜单、收起、窗口丢失后重新挂载、桌面接管。会读取桌面（不修改），并短暂隐藏桌面图标 | `fence-test.json` |
 | `.\bin\AWall.exe --test-desktop` | 桌面块的挂载、揭开、透明背景实验，以及图标显隐和异常退出恢复。会短暂隐藏桌面图标；没有全屏程序时会切换两次“显示桌面” | `desktop-test.json` |
 
 `--test-library` 支持 `--perf-seconds=N` 调整每项采样时间。测试 mpv 时可以加 `--video-backend=mpv`，并运行包含 mpv 的构建。首帧和截图可用于定位播放问题，特效还原程度需要对照原场景检查。

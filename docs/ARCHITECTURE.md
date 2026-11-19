@@ -27,6 +27,26 @@ AWall 是给 Windows 桌面套上的一层：壁纸和桌面美化是两条产�
   `Restore` 只撤销 AWall 自己做的隐藏：如果用户在资源管理器里关掉了“显示桌面图标”，AWall 不会把图标打开。
 - **自检**：`--test-desktop` 覆盖以上各项，结果写入 `desktop-test.json`。有全屏程序时不切换“显示桌面”，屏幕取色项会跳过；块的像素改用 `PrintWindow(PW_RENDERFULLCONTENT)` 抓取桌面顶层窗口来读，桌面被挡住时也能读到。
 
+### 分区（Fences）
+
+- **实现位置**：模型、存盘和规则在 `Features/Desktop/FenceModel.cs`（`FenceConfig`、`FenceRule`、`FenceStore.Classify`）。控制器是 `FenceService`。每个分区是一个原生 WPF 块 `FenceView`，由 `BlockWindow` 挂在 `AboveIcons` 层，不用 WebView。和 Shell 打交道的部分在 `Platform/ShellItems`：列出桌面项、取 Explorer 的显示名和图标（`IShellItemImageFactory`，保留透明通道）、打开、`SHFileOperation` 文件操作（可撤销）、系统右键菜单（`IContextMenu3`）。
+- **四种分区**：
+  - `rule`：按扩展名、名称关键词、创建天数匹配，有内置预设；
+  - `free`：显示用户拖进来的桌面项，保存的是路径和顺序；
+  - `folder`：任意文件夹的实时镜像；
+  - `other`：显示没被归入任何分区的桌面项。
+- **归类顺序**：自由分区先认领自己的项目，再按规则分区的顺序匹配，剩下的全部进“其他”。系统虚拟图标（回收站、此电脑等，按“桌面图标设置”读取）不参与规则匹配。
+- **只是视图**：除了用户主动拖放到桌面或文件夹分区，不移动任何文件。桌面上的文件被改名时，自由分区会跟着更新路径。
+- **桌面接管**：有规则或自由分区时，隐藏系统图标，并显示“其他”分区；最后一个规则 / 自由分区删除后，恢复图标并移除“其他”。图标恢复沿用上面 `DesktopIcons` 的规则。
+- **恢复**：每 2 秒做一次健康检查，两种情况都会处理：
+  - 窗口还在但父窗口不对：重新挂载；
+  - Explorer 重启后系统销毁了子窗口：用同一份内容重建窗口再挂载。
+
+  重新挂载后，如果正处于接管状态，再隐藏一次系统图标。
+- **外观**：子窗口不能透明，所以分区是不透明的深色卡片，圆角用 `SetWindowRgn` 实现。按壁纸取色见路线图 5.3。
+- **开销**：只开分区时没有额外进程，自检测得 CPU 0.2–0.5%（3 秒采样）。文件变化由 `FileSystemWatcher` 通知，延迟 350 ms 合并后刷新。
+- **存盘**：`%LOCALAPPDATA%\AWall\fences.json`，坐标是相对所在显示器左上角的像素。显示器不在时分区隐藏，配置保留。
+
 ## 2. 能静则静：三档呈现
 
 开销主要来自“画面怎么渲染”，而不是窗口挂在哪一层。所以宿主按内容的变化频率选择最便宜的呈现方式（`PresentPolicy.Choose`）：
@@ -115,11 +135,11 @@ App ──► UI ──► Features ──► Render / Platform ──► Core
 |---|---|---|---|
 | App | `src/App` | 进程入口、单实例、路径、对外命令入口（`Program`、`AppPaths`、`CommandPipe`、`AWall.manifest`）；`src/Cli` 是单独编译的 `AWallCmd.exe` 入口 | 业务逻辑 |
 | Core | `src/Core` | 纯数据与规则：素材模型与扫描（`Item`、`LibraryScanner`、`WeImport`）、设置（`AppSettings`）、布局模型（`SavedLayout`）、命令总线（`CommandBus`） | 引用 UI、Render、Platform；调用 Windows 窗口 API |
-| Platform | `src/Platform` | Windows 相关能力：桌面宿主挂载（`DesktopHost`，含 `AboveIcons` 挂载与揭开）、图标显隐（`DesktopIcons`）、Win32 声明（`Native`）、系统壁纸（`SystemWallpaper`）、开机启动（`Autostart`）、锁屏（`LockScreen` + `Set-LockImage.ps1`）、系统静态背景截图（`StartupBackdrop`） | 引用 UI |
+| Platform | `src/Platform` | Windows 相关能力：桌面宿主挂载（`DesktopHost`，含 `AboveIcons` 挂载与揭开）、图标显隐（`DesktopIcons`）、Shell 项目与右键菜单（`ShellItems`）、Win32 声明（`Native`）、系统壁纸（`SystemWallpaper`）、开机启动（`Autostart`）、锁屏（`LockScreen` + `Set-LockImage.ps1`）、系统静态背景截图（`StartupBackdrop`） | 引用 UI |
 | Render | `src/Render` | 产生像素：WebView2 场景宿主（`ScenePlayer` + `scene/`）、mpv（`MpvPlayer`）、桌面播放窗口（`Player`）、切换遮罩（`TransitionCover`）、CDN 缓存（`WebCdn`） | 引用 UI |
-| Features | `src/Features` | 产品线：`Wallpaper`（播放控制器 `WallpaperService`：每屏计划、切换遮罩与回滚、PKG 同页切换、预热播放器、暂停规则、桌面恢复、轮播、布局保存；HTML 参数 `WebProperties`）、`Desktop`（层 / 块 / 场景模型、呈现策略、块窗口 `BlockWindow`） | 引用 UI |
+| Features | `src/Features` | 产品线：`Wallpaper`（播放控制器 `WallpaperService`：每屏计划、切换遮罩与回滚、PKG 同页切换、预热播放器、暂停规则、桌面恢复、轮播、布局保存；HTML 参数 `WebProperties`）、`Desktop`（层 / 块 / 场景模型、呈现策略、块窗口 `BlockWindow`、分区 `FenceService` / `FenceView` / `FenceModel`） | 引用 UI |
 | UI | `src/UI` | 展示和转发：主窗口（按关注点拆成 partial）、托盘、主题、参数窗口、导入窗口 | 自己实现业务规则；绕过命令表 |
-| Diagnostics | `src/Diagnostics` | 自检和性能测量（`PerfProbe`、`MainWindow.SelfTest`、`MainWindow.DesktopTest`） | 被正式功能依赖 |
+| Diagnostics | `src/Diagnostics` | 自检和性能测量（`PerfProbe`、`MainWindow.SelfTest`、`MainWindow.DesktopTest`、`MainWindow.FenceTest`） | 被正式功能依赖 |
 
 ### 规则
 
@@ -155,6 +175,10 @@ App ──► UI ──► Features ──► Render / Platform ──► Core
 | `autostart.set` | `on=on\|off` | 开机自动启动 |
 | `system-wallpaper.set` | `file=<图片> [display=all\|1..n]` | 静态档：任意位置的图片设为 Windows 系统壁纸，AWall 不参与渲染；其他屏不变 |
 | `desktop.icons` | `[visible=on\|off]` | 显示 / 隐藏系统桌面图标，不带参数时切换；托盘菜单同名项调用它 |
+| `fence.list` / `fence.refresh` | | 列出分区 / 重新读取桌面 |
+| `fence.add` | `kind=rule preset=<预设>`、`kind=rule title= [ext=] [keywords=] [days=]`、`kind=free [title=]` 或 `kind=folder folder= [title=]`，都可加 `[display=1..n]` | 新建分区；预设见 `fence.add` 的用法说明 |
+| `fence.remove` / `fence.set` | `id=`；`set` 可改 `title` `collapsed` `x` `y` `width` `height` | 删除（文件不动）/ 修改分区 |
+| `fence.lock` | `on=on\|off` | 锁定 / 解锁布局 |
 
 `wallpaper.status` 的每块显示器带 `route`：`live` / `system-wallpaper` / `snapshot`。
 
