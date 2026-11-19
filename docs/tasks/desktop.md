@@ -2,9 +2,9 @@
 
 ## 状态
 
-- 阶段：路线图第 2 步 · 自动回归已通过，待手动回归（第 1 步已完成）
-- 已完成：分层目录、命令表、桌面模型（层 / 块 / 场景 / 呈现策略）、系统壁纸接口，已写入 [架构文档](../ARCHITECTURE.md)
-- 第 2 步：播放、轮播、布局逻辑已移到 `Features/Wallpaper/WallpaperService`（三个 partial 文件），主窗口只调用它的方法、订阅它的事件。编译和 `--test-transitions`、`--test-library` 已通过，**手动回归未做**，见下方“验证”
+- 阶段：路线图第 2 步已完成，下一步是第 3 步（named pipe + `--cmd` 命令行）
+- 已完成（第 1 步）：分层目录、命令表、桌面模型（层 / 块 / 场景 / 呈现策略）、系统壁纸接口，已写入 [架构文档](../ARCHITECTURE.md)
+- 第 2 步：播放、轮播、布局逻辑已移到 `Features/Wallpaper/WallpaperService`（三个 partial 文件），主窗口只调用它的方法、订阅它的事件。自动回归和手动回归均已通过（多屏未测），见下方“验证”
 - 已定（2026-11-19，用户授权按建议决定）：
   - 揭开的默认快捷键：`Ctrl+Alt+Space`，可在设置中改
   - “不接管资源管理器、默认不移动用户文件”定为架构约定（已写入架构文档）；第一版规则分区不提供“真的移动文件”的开关
@@ -134,7 +134,7 @@
 ## 路线图
 
 1. ✅ 分层目录、命令表、桌面模型（层 / 块 / 场景 / 呈现策略）、系统壁纸接口。
-2. 把播放控制器抽成 `WallpaperService`（每一步都跑 `--test-transitions` 和 `--test-library` 回归）。代码已写，待验证。
+2. ✅ 把播放控制器抽成 `WallpaperService`（每一步都跑 `--test-transitions` 和 `--test-library` 回归）。
 3. named pipe + `--cmd` 命令行。
 4. 接通静态档和快照档：素材库支持图片类型；`present=interval` 的 HTML 定时离屏渲染并设成系统壁纸；按屏混合呈现。
 5. 块宿主：先做三个小实验（挂到 DefView、带 WebView2 的窗口换父、HTML 块透明背景）；`AboveIcons` 挂到 DefView；分区（规则 / 文件夹 / 自由）、图标显隐与双击隐藏、原生右键菜单、按壁纸取色；`BelowIcons` 的块合成到一个共享 WebView2 页面；编辑模式；资源管理器右键菜单项；`--test-desktop` 自检。
@@ -147,7 +147,7 @@
 
 每完成一步，在这里记录验收命令、结果和日志位置。
 
-### 第 2 步：WallpaperService（待验证）
+### 第 2 步：WallpaperService（已完成）
 
 改动是纯搬移，行为应与之前完全一致。需要在 Windows 上依次完成：
 
@@ -163,4 +163,4 @@
 - 编译：先失败，`WeCandidate` 找不到。原因是 `.gitignore` 的 `library/` 在 Windows 上不区分大小写，把 `src/Core/Library/`（`Item.cs`、`LibraryScanner.cs`、`WeImport.cs`）一起忽略了，这三个文件从未入库，第一轮能编译只是因为主目录里有本地文件。规则改为 `/library/` 并补交这三个文件后，编译通过（两个既有警告）。
 - `--test-transitions`：`success: true`，11 项全部通过，包括第一轮失败的 `scene-to-video`。
 - `--test-library`：33 项全部通过，`frameChanged` 33 项，警告 0，与第一轮逐项一致；各类型平均内存、CPU 与第一轮差别在采样波动内。
-- 手动回归（第 4 条）：未做。
+- 手动回归（第 4 条）：用户验收通过（设壁纸与 MP4/PKG/HTML 切换、暂停 / 继续、托盘“下一张”、轮播与全屏延后、重启恢复布局、停止壁纸、托盘唤出）。只有一块显示器，多屏“应用到”未测，接上第二块屏后补测。
