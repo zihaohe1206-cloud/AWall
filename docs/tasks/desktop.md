@@ -2,7 +2,9 @@
 
 ## 状态
 
-- 阶段：路线图第 3、4 步已实现并通过自动验证，**均待用户验收**；之后是第 5 步（块宿主）
+- 阶段：第 5 步（块宿主）拆成 5.1–5.5（见路线图）。5.1“桌面层基础”已实现，并通过自动验证；第 3、4、5.1 步都**待用户验收**
+- 5.1：三个实验已做完。实现了 `AboveIcons` 挂载到 DefView（`DesktopHost.AttachAboveIcons` / `Reveal`、`Features/Desktop/BlockWindow`）、图标显隐（`Platform/DesktopIcons`，命令 `desktop.icons`，托盘菜单项）和 `--test-desktop` 自检，约定已写入[架构文档](../ARCHITECTURE.md#aboveicons-层与图标显隐)
+- 待用户决定：子窗口里的网页块不能透明，原计划“`BelowIcons` 块合成到一个共享透明页面”走不通，建议改成“画进壁纸页面”，见路线图 5.4
 - 第 4 步：素材库支持图片；HTML 用 `<meta name="awall-present">` 声明静态 / 定时；每块屏独立选呈现档（实时 / 系统壁纸 / 快照）。实现在 `Features/Wallpaper/WallpaperService.Static.cs`、`WebPresent.cs`，约定已写入[架构文档](../ARCHITECTURE.md#2-能静则静三档呈现)
 - 第 3 步：`App/CommandPipe.cs`（管道服务端、客户端、命令行前端）+ 控制台程序 `AWallCmd.exe`；约定已写入[架构文档](../ARCHITECTURE.md#对外入口命令管道与命令行)，用法写入 README
 - 已完成（第 1 步）：分层目录、命令表、桌面模型（层 / 块 / 场景 / 呈现策略）、系统壁纸接口，已写入 [架构文档](../ARCHITECTURE.md)
@@ -141,7 +143,21 @@
 2. ✅ 把播放控制器抽成 `WallpaperService`（每一步都跑 `--test-transitions` 和 `--test-library` 回归）。
 3. named pipe + `--cmd` 命令行。已实现，待用户验收。
 4. 接通静态档和快照档：素材库支持图片类型；`present=interval` 的 HTML 定时离屏渲染并设成系统壁纸；按屏混合呈现。已实现，待用户验收（多屏混合只在单屏上验证了代码路径）。
-5. 块宿主：先做三个小实验（挂到 DefView、带 WebView2 的窗口换父、HTML 块透明背景）；`AboveIcons` 挂到 DefView；分区（规则 / 文件夹 / 自由）、图标显隐与双击隐藏、原生右键菜单、按壁纸取色；`BelowIcons` 的块合成到一个共享 WebView2 页面；编辑模式；资源管理器右键菜单项；`--test-desktop` 自检。
+5. 块宿主，拆成五个子步骤：
+    1. 桌面层基础。已实现，待用户验收。
+       - 三个小实验：挂到 DefView、带 WebView2 的窗口换父、HTML 块透明背景。
+       - `AboveIcons` 挂到 DefView，并支持揭开 / 收回。
+       - 图标显隐，含异常退出后的恢复，命令和托盘菜单都能调用。
+       - `--test-desktop` 自检。
+    2. 分区：规则 / 文件夹 / 自由三种；读图标、监听文件夹；双击、拖放、重命名；原生右键菜单（`ShellContextMenu`）；块布局存盘；Explorer 重启后重新挂载。
+    3. 鼠标钩子：双击桌面空白处隐藏图标和分区；按壁纸取色，分区配色跟着换壁纸过渡。
+    4. `BelowIcons` 装饰块。实验 3 证明子窗口里的网页做不了透明，所以**建议**不另开共享页面，而是把块画进壁纸本身：
+       - 实时壁纸本来就是 WebView2 页面（视频、PKG、HTML），块作为叠加层注入；
+       - 静态 / 快照档把块合成进系统壁纸图片；
+       - mpv 后端没有页面，不支持装饰块。
+
+       这条改变了原计划，**等用户决定**。
+    5. 编辑模式（网格、拖动吸附、块库）、资源管理器右键菜单项“编辑桌面（AWall）”。
     - 验收：Explorer 重启和异常退出后桌面完好；只有分区时 CPU 接近 0。
 6. 数据源与场景：先接 `time` / `theme` / `sys` / `idle` / `folder`，再接 `media` / `audio`；场景切换（轮播改为场景内只换壁纸）、待机场景、揭开。
     - 验收：桌面被完全遮挡时，开销与壁纸暂停时持平。
@@ -200,3 +216,29 @@
 - 未验证：多显示器混合（例如一块屏视频、一块屏图片），只有一块屏，代码路径只在单屏上走过；锁屏快照没测，以免改动你的锁屏图片。
 
 待用户验收：导入一张图片设为壁纸；写一个带 `<meta name="awall-present" content="interval=60">` 的网页，看是否每分钟更新；有第二块屏时测一块视频、一块图片。
+
+### 第 5.1 步：桌面层基础（待用户验收）
+
+结果（2026-11-20，单显示器 2560×1440；VALORANT 全屏运行，`SHQueryUserNotificationState` = 2）：
+
+- 编译通过，只有两个既有警告。`--test-transitions` 11 项全部通过。
+- `--test-desktop` 的 12 项全部通过，结果在 `%LOCALAPPDATA%\AWall\desktop-test.json`：
+  - **实验 1，原生块挂到 DefView**：挂载用时 80–150 ms。`ChildWindowFromPointEx` 显示块在图标列表之上。用 `PrintWindow` 抓桌面，能看到块的颜色。只有一个原生块时，AWall 的 CPU 为 0.9%（3 秒采样，进程刚启动）。
+  - **实验 2，带 WebView2 的块揭开 / 收回**：揭开 9–11 ms，收回 3–4 ms。揭开后 400 ms 内每 15 ms 取一次色，没有一帧不对。页面帧计数一直在增长，来回两次都正常。一个网页块共 7 个进程（AWall + 6 个 WebView2），CPU 0.3%。
+  - **实验 3，网页块透明背景：不可行**。
+    - 透明背景：透明处是黑色 `#000000`。
+    - 子窗口加 `WS_EX_LAYERED` 颜色键：`SetLayeredWindowAttributes` 返回 87，透明处是 WPF 背景色 `#010203`。
+
+    结论和建议见路线图 5.4。
+  - **图标**：隐藏后再恢复；模拟崩溃后启动时自动恢复；用户自己在资源管理器里关掉图标时，`Restore` 不会去打开。
+- 命令行：`desktop.icons visible=off` / 不带参数切换 / `visible=maybe`（失败，退出码 1）都符合预期。先隐藏、再 `app.exit`，图标恢复，标记文件已删除。
+- 未验证（桌面被全屏游戏挡住，自检自动跳过，也没有切换“显示桌面”）：
+  - 屏幕上实际看到块；
+  - 鼠标点在块上时命中块；
+  - Win+D 后块仍留在桌面上；
+  - Explorer 重启后图标与块的表现：自检不会杀 Explorer。
+
+待用户验收：
+1. 关掉全屏程序后运行 `.\bin\AWall.exe --test-desktop`，`desktop-test.json` 里应多出 `screen.*` 和 `win+d.*` 几项，且 `success` 为 `true`。
+2. 在托盘菜单里试“隐藏桌面图标 / 显示桌面图标”。
+3. 对 5.4 的方向做决定。

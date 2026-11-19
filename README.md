@@ -44,7 +44,7 @@ AWall 是 Windows 动态桌面壁纸工具，支持 MP4、Wallpaper Engine 的 P
 2. 选中素材，点击“设为动态桌面”。多屏时在“应用到”中选择全部显示器或指定屏幕。
 3. 画面加载后可点击“同步锁屏快照”，将主显示器当前帧设为静态锁屏图片。Windows 策略可能限制此操作。
 
-关闭窗口后程序驻留托盘。单击托盘图标或再次启动 AWall 可唤出窗口。托盘菜单支持暂停、继续、下一张、停止和退出。正常退出会保留已应用的布局，下次启动时恢复。“停止壁纸”会清除该布局。
+关闭窗口后程序驻留托盘。单击托盘图标或再次启动 AWall 可唤出窗口。托盘菜单支持暂停、继续、下一张、停止、隐藏 / 显示桌面图标和退出。图标只在 AWall 运行期间隐藏，退出、Explorer 重启或异常退出后再次启动时都会恢复。正常退出会保留已应用的布局，下次启动时恢复。“停止壁纸”会清除该布局。
 
 在主界面可以开启轮播、设置顺序和间隔、开启登录时启动，或切换浅色、深色和跟随系统。轮播列表为空时使用整个素材库。手动切换会重新计时，暂停、锁屏或被全屏窗口遮挡时会延后轮播。开机启动默认关闭。
 
@@ -93,6 +93,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 | `.\bin\AWall.exe --self-test` | 基本播放、截图和短时资源采样 | `selftest.txt`、`test-frame.jpg` |
 | `.\bin\AWall.exe --test-library` | 逐个检查支持的素材，记录画面、帧率和资源占用 | `compatibility/results.json`、`compatibility/perf-summary.txt`、`compatibility/perf-summary.json` |
 | `.\bin\AWall.exe --test-transitions` | 使用素材库中的 MP4 和 PKG 验证切换、失败回滚和布局恢复，各需至少一项 | `transition-test.json` |
+| `.\bin\AWall.exe --test-desktop` | 桌面块的挂载、揭开、透明背景实验，以及图标显隐和异常退出恢复。会短暂隐藏桌面图标；没有全屏程序时会切换两次“显示桌面” | `desktop-test.json` |
 
 `--test-library` 支持 `--perf-seconds=N` 调整每项采样时间。测试 mpv 时可以加 `--video-backend=mpv`，并运行包含 mpv 的构建。首帧和截图可用于定位播放问题，特效还原程度需要对照原场景检查。
 

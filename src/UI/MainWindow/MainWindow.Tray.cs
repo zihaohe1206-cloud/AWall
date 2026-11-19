@@ -28,10 +28,11 @@ public partial class MainWindow {
   trayPause=new Forms.ToolStripMenuItem("暂停壁纸",null,delegate{Run("wallpaper.toggle-pause");});
   trayNext=new Forms.ToolStripMenuItem("下一张壁纸",null,delegate{Run("wallpaper.next");});
   trayStop=new Forms.ToolStripMenuItem("停止壁纸",null,delegate{Run("wallpaper.stop");});
+  var trayIcons=new Forms.ToolStripMenuItem("隐藏桌面图标",null,delegate{Run("desktop.icons");});
   var quit=new Forms.ToolStripMenuItem("退出",null,delegate{Run("app.exit");});
-  foreach(var item in new Forms.ToolStripMenuItem[]{open,trayPause,trayNext,trayStop,quit})item.Padding=new Forms.Padding(4,4,12,4);
-  trayMenu.Items.AddRange(new Forms.ToolStripItem[]{trayNow,new Forms.ToolStripSeparator(),open,trayPause,trayNext,trayStop,new Forms.ToolStripSeparator(),quit});
-  trayMenu.Opening+=delegate{bool active=current!=null||wallpaper.HasPlayers,paused=wallpaper.Paused;trayNow.Text=current==null?"未播放":(paused?"已暂停：":"正在播放：")+Shorten(NowTitle(),26);trayPause.Text=paused?"继续壁纸":"暂停壁纸";trayPause.Enabled=current!=null;trayNext.Enabled=current!=null&&wallpaper.RotationCandidates().Count>1;trayStop.Enabled=active;};
+  foreach(var item in new Forms.ToolStripMenuItem[]{open,trayPause,trayNext,trayStop,trayIcons,quit})item.Padding=new Forms.Padding(4,4,12,4);
+  trayMenu.Items.AddRange(new Forms.ToolStripItem[]{trayNow,new Forms.ToolStripSeparator(),open,trayPause,trayNext,trayStop,trayIcons,new Forms.ToolStripSeparator(),quit});
+  trayMenu.Opening+=delegate{bool active=current!=null||wallpaper.HasPlayers,paused=wallpaper.Paused;trayNow.Text=current==null?"未播放":(paused?"已暂停：":"正在播放：")+Shorten(NowTitle(),26);trayPause.Text=paused?"继续壁纸":"暂停壁纸";trayPause.Enabled=current!=null;trayNext.Enabled=current!=null&&wallpaper.RotationCandidates().Count>1;trayStop.Enabled=active;trayIcons.Text=DesktopIcons.HiddenByAWall?"显示桌面图标":"隐藏桌面图标";};
   ApplyMenuTheme(); tray.ContextMenuStrip=trayMenu;
   tray.MouseClick+=delegate(object s,Forms.MouseEventArgs e){if(e.Button==Forms.MouseButtons.Left)ShowMain();};
  }

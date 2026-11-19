@@ -12,7 +12,20 @@ AWall 是给 Windows 桌面套上的一层：壁纸和桌面美化是两条产�
 
 现有的 MP4 / PKG / HTML 壁纸就是 `Wallpaper` 层的实时内容；AI 生成的 HTML 壁纸已经是内容包的雏形。
 
-目前只有数据模型和清单校验（`Features/Desktop/DesktopModel.cs`），还没有宿主加载块，也没有数据源。桌面美化的产品形态、交互、挂载方案和路线图都还是计划，见 [桌面美化任务](tasks/desktop.md)；实现并经用户验收后再写回本文档。
+已实现：数据模型和清单校验（`Features/Desktop/DesktopModel.cs`）、`AboveIcons` 层的挂载和图标显隐（见下）。还没有宿主加载块，也没有数据源。桌面美化的产品形态、交互和路线图见 [桌面美化任务](tasks/desktop.md)；实现并经用户验收后再写回本文档。
+
+### AboveIcons 层与图标显隐
+
+- **挂载**：`DesktopHost.AttachAboveIcons(hwnd, 屏幕像素矩形)` 把窗口设成 `SHELLDLL_DefView` 的子窗口，放在图标列表 `SysListView32` 之上，在所有应用窗口之下。它和壁纸复用同一套 WorkerW / DefView 查找与健康检查；Explorer 重启后 `DesktopHost.IsAboveIcons` 变为 false，需要重新挂载。块窗口是 `Features/Desktop/BlockWindow`，内容可以是原生 WPF 或 WebView2，自带 `WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`，不抢焦点，也不进 Alt+Tab。
+- **揭开**：`DesktopHost.Reveal` 让窗口脱离 DefView，成为置顶的弹出窗口；`BlockWindow.Unreveal` 再把它挂回去。实测带 WebView2 的块换父约 10 ms，没有闪烁帧，页面一直在渲染，可以反复揭开、收回。
+- **透明**：DefView 的子窗口里，WebView2 页面做不了透明背景。`DefaultBackgroundColor=Transparent` 时透明处显示黑色；子窗口设 `WS_EX_LAYERED` 颜色键时，`SetLayeredWindowAttributes` 返回错误 87。所以 `AboveIcons` 的网页块是不透明的矩形。
+- **图标显隐**：`Platform/DesktopIcons` 只对资源管理器的图标窗口调用 `ShowWindow`，不自己画图标。隐藏时写 `%LOCALAPPDATA%\AWall\icons-hidden.flag`，以下几种情况都会恢复图标：
+  - 退出 AWall；
+  - Explorer 重启：新的 Explorer 会自己显示图标，AWall 只清掉标记；
+  - 异常退出后再次启动：看到标记就恢复。
+
+  `Restore` 只撤销 AWall 自己做的隐藏：如果用户在资源管理器里关掉了“显示桌面图标”，AWall 不会把图标打开。
+- **自检**：`--test-desktop` 覆盖以上各项，结果写入 `desktop-test.json`。有全屏程序时不切换“显示桌面”，屏幕取色项会跳过；块的像素改用 `PrintWindow(PW_RENDERFULLCONTENT)` 抓取桌面顶层窗口来读，桌面被挡住时也能读到。
 
 ## 2. 能静则静：三档呈现
 
@@ -102,11 +115,11 @@ App ──► UI ──► Features ──► Render / Platform ──► Core
 |---|---|---|---|
 | App | `src/App` | 进程入口、单实例、路径、对外命令入口（`Program`、`AppPaths`、`CommandPipe`、`AWall.manifest`）；`src/Cli` 是单独编译的 `AWallCmd.exe` 入口 | 业务逻辑 |
 | Core | `src/Core` | 纯数据与规则：素材模型与扫描（`Item`、`LibraryScanner`、`WeImport`）、设置（`AppSettings`）、布局模型（`SavedLayout`）、命令总线（`CommandBus`） | 引用 UI、Render、Platform；调用 Windows 窗口 API |
-| Platform | `src/Platform` | Windows 相关能力：桌面宿主挂载（`DesktopHost`）、Win32 声明（`Native`）、系统壁纸（`SystemWallpaper`）、开机启动（`Autostart`）、锁屏（`LockScreen` + `Set-LockImage.ps1`）、系统静态背景截图（`StartupBackdrop`） | 引用 UI |
+| Platform | `src/Platform` | Windows 相关能力：桌面宿主挂载（`DesktopHost`，含 `AboveIcons` 挂载与揭开）、图标显隐（`DesktopIcons`）、Win32 声明（`Native`）、系统壁纸（`SystemWallpaper`）、开机启动（`Autostart`）、锁屏（`LockScreen` + `Set-LockImage.ps1`）、系统静态背景截图（`StartupBackdrop`） | 引用 UI |
 | Render | `src/Render` | 产生像素：WebView2 场景宿主（`ScenePlayer` + `scene/`）、mpv（`MpvPlayer`）、桌面播放窗口（`Player`）、切换遮罩（`TransitionCover`）、CDN 缓存（`WebCdn`） | 引用 UI |
-| Features | `src/Features` | 产品线：`Wallpaper`（播放控制器 `WallpaperService`：每屏计划、切换遮罩与回滚、PKG 同页切换、预热播放器、暂停规则、桌面恢复、轮播、布局保存；HTML 参数 `WebProperties`）、`Desktop`（层 / 块 / 场景模型、呈现策略） | 引用 UI |
+| Features | `src/Features` | 产品线：`Wallpaper`（播放控制器 `WallpaperService`：每屏计划、切换遮罩与回滚、PKG 同页切换、预热播放器、暂停规则、桌面恢复、轮播、布局保存；HTML 参数 `WebProperties`）、`Desktop`（层 / 块 / 场景模型、呈现策略、块窗口 `BlockWindow`） | 引用 UI |
 | UI | `src/UI` | 展示和转发：主窗口（按关注点拆成 partial）、托盘、主题、参数窗口、导入窗口 | 自己实现业务规则；绕过命令表 |
-| Diagnostics | `src/Diagnostics` | 自检和性能测量（`PerfProbe`、`MainWindow.SelfTest`） | 被正式功能依赖 |
+| Diagnostics | `src/Diagnostics` | 自检和性能测量（`PerfProbe`、`MainWindow.SelfTest`、`MainWindow.DesktopTest`） | 被正式功能依赖 |
 
 ### 规则
 
@@ -141,6 +154,7 @@ App ──► UI ──► Features ──► Render / Platform ──► Core
 | `rotation.set` | `[on=on\|off] [minutes=5\|15\|30\|60\|180] [order=sequential\|random]` | 轮播设置 |
 | `autostart.set` | `on=on\|off` | 开机自动启动 |
 | `system-wallpaper.set` | `file=<图片> [display=all\|1..n]` | 静态档：任意位置的图片设为 Windows 系统壁纸，AWall 不参与渲染；其他屏不变 |
+| `desktop.icons` | `[visible=on\|off]` | 显示 / 隐藏系统桌面图标，不带参数时切换；托盘菜单同名项调用它 |
 
 `wallpaper.status` 的每块显示器带 `route`：`live` / `system-wallpaper` / `snapshot`。
 

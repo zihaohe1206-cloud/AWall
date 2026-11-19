@@ -17,7 +17,7 @@ public static class Program {
   // "AWall.exe --cmd <命令> key=value": forward to the running instance over the command pipe and print the result.
   int cmdAt=Array.IndexOf(args,"--cmd");
   if(cmdAt>=0){AttachParentConsole();Environment.ExitCode=CommandLine.Run(args.Skip(cmdAt+1).ToArray(),Console.Out,Console.Error);Console.Out.Flush();return;}
-  Native.SetProcessDPIAware();bool test=args.Contains("--self-test")||args.Contains("--test-library")||args.Contains("--test-transitions");bool autostart=args.Contains("--autostart");
+  Native.SetProcessDPIAware();bool test=args.Contains("--self-test")||args.Contains("--test-library")||args.Contains("--test-transitions")||args.Contains("--test-desktop");bool autostart=args.Contains("--autostart");
   // The show event is created before the mutex, so a second launch can always tell
   // whether the running instance listens for it (builds before this change did not).
   bool signalCreated;

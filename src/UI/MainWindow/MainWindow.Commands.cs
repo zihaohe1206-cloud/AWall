@@ -29,6 +29,7 @@ public partial class MainWindow {
   commands.Register("library.list","library.list","列出素材库",delegate(CommandArgs a){return CommandResult.Success(items.Count+" 个素材",items.Select(x=>new Dictionary<string,object>{{"title",x.Title},{"type",x.Type},{"file",x.File}}).ToList());});
   commands.Register("rotation.set","rotation.set [on=on|off] [minutes=5|15|30|60|180] [order=sequential|random]","设置轮播",CmdRotation);
   commands.Register("autostart.set","autostart.set on=on|off","开机自动启动",CmdAutostart);
+  commands.Register("desktop.icons","desktop.icons [visible=on|off]","显示 / 隐藏系统桌面图标（不带参数时切换；退出 AWall 时总会恢复）",CmdIcons);
   commands.Register("system-wallpaper.set","system-wallpaper.set file=<图片> [display=all|1..n]","任意位置的图片设为 Windows 系统壁纸（静态档：AWall 不参与渲染；其他显示器的动态壁纸保持不变）",CmdSystemWallpaper);
  }
  // Runs a command from the UI. Handlers report their own progress; failures show in the status line.
@@ -89,6 +90,12 @@ public partial class MainWindow {
   var item=items.FirstOrDefault(x=>x.Type=="image"&&String.Equals(x.File,full,StringComparison.OrdinalIgnoreCase))??new Item(){Title=Path.GetFileNameWithoutExtension(full),Type="image",File=full,Preview=full};
   ApplyItem(item,device);
   return CommandResult.Success("正在设为系统壁纸："+item.Title);
+ }
+ CommandResult CmdIcons(CommandArgs a){
+  if(a.Has("visible")&&!a.IsFlag("visible"))return CommandResult.Fail("visible 应为 on 或 off。");
+  bool visible=a.Has("visible")?a.Flag("visible",true):DesktopIcons.HiddenByAWall||!DesktopIcons.Visible;
+  if(!DesktopIcons.SetVisible(visible))return CommandResult.Fail("找不到 Windows 桌面图标窗口，请稍后再试。");
+  return CommandResult.Success(visible?"已显示桌面图标。":"已隐藏桌面图标（退出 AWall 时会恢复）。",new Dictionary<string,object>{{"visible",visible}});
  }
 }
 }

@@ -42,7 +42,7 @@ public partial class MainWindow {
  readonly uint taskbarCreated=RegisterWindowMessage("TaskbarCreated");
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern uint RegisterWindowMessage(string name);
  IntPtr ShellMessage(IntPtr hwnd,int message,IntPtr wParam,IntPtr lParam,ref bool handled){
-  if(taskbarCreated!=0&&(uint)message==taskbarCreated)wallpaper.ShellRestarted();return IntPtr.Zero;
+  if(taskbarCreated!=0&&(uint)message==taskbarCreated){wallpaper.ShellRestarted();DesktopIcons.ShellRestarted();}return IntPtr.Zero;
  }
 }
 }

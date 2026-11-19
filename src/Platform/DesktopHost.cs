@@ -111,6 +111,45 @@ public static class DesktopHost {
   if(!SetWindowPos(hwnd,bottom?Bottom:IntPtr.Zero,origin.X,origin.Y,bounds.Width,bounds.Height,NoActivatePosition|FrameChanged))throw Failure("壁纸窗口定位失败");
   Log("attach hwnd="+hwnd+" parent="+parent+" screen="+monitor.DeviceName+" x="+origin.X+" y="+origin.Y+" width="+bounds.Width+" height="+bounds.Height+" bottom="+bottom);
  }
+ // ---- AboveIcons layer: children of SHELLDLL_DefView, above the icon list (SysListView32) and below every
+ // application window. Win+D leaves them on the desktop. Pattern from DeskFrame's SetAsDesktopChild (MIT).
+ const long ClipSiblings=0x04000000L, Topmost=0x8L;
+ static readonly IntPtr NotTopmost=new IntPtr(-2), TopmostAfter=new IntPtr(-1);
+ [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
+ // The DefView that holds the desktop icons (discovered together with the wallpaper WorkerW).
+ public static IntPtr DefView(){Parent();return defView;}
+ public static IntPtr IconList(){return FindWindowEx(DefView(),IntPtr.Zero,"SysListView32",null);}
+ public static bool IsAboveIcons(IntPtr hwnd){return hwnd!=IntPtr.Zero&&IsWindow(hwnd)&&IsHealthy(worker)&&GetParent(hwnd)==defView;}
+ // bounds: screen pixels. Interactive: no WS_EX_TRANSPARENT, so clicks reach the block.
+ public static void AttachAboveIcons(IntPtr hwnd,System.Drawing.Rectangle bounds){
+  if(hwnd==IntPtr.Zero||!IsWindow(hwnd))throw new InvalidOperationException("块窗口已销毁，无法挂载。");
+  var view=DefView();
+  if((GetLong(hwnd,ExtendedStyle).ToInt64()&Topmost)!=0)SetWindowPos(hwnd,NotTopmost,0,0,0,0,NoMove|NoSize|NoActivatePosition);
+  SetStyle(hwnd,Style,(GetLong(hwnd,Style).ToInt64()&~Popup)|Child|ClipSiblings);
+  SetStyle(hwnd,ExtendedStyle,(GetLong(hwnd,ExtendedStyle).ToInt64()|NoActivate)&~Transparent&~Topmost);
+  if(GetParent(hwnd)!=view){
+   SetLastError(0);var previous=SetParent(hwnd,view);
+   if(previous==IntPtr.Zero&&Marshal.GetLastWin32Error()!=0)throw Failure("块挂载到桌面图标层失败");
+   if(GetParent(hwnd)!=view)throw new InvalidOperationException("块父窗口校验失败。");
+  }
+  var origin=new Point(){X=bounds.Left,Y=bounds.Top};
+  SetLastError(0);int offset=MapWindowPoints(IntPtr.Zero,view,ref origin,1);
+  if(offset==0&&Marshal.GetLastWin32Error()!=0)throw Failure("块坐标映射失败");
+  // HWND_TOP among DefView's children: above SysListView32. 0x40 = SWP_SHOWWINDOW.
+  if(!SetWindowPos(hwnd,IntPtr.Zero,origin.X,origin.Y,bounds.Width,bounds.Height,NoActivatePosition|FrameChanged|0x40))throw Failure("块窗口定位失败");
+  Log("attach-above-icons hwnd="+hwnd+" defview="+view+" x="+origin.X+" y="+origin.Y+" width="+bounds.Width+" height="+bounds.Height);
+ }
+ // "揭开": take a block out of DefView and put it above every window (topmost popup) at the same screen place.
+ public static void Reveal(IntPtr hwnd,System.Drawing.Rectangle bounds){
+  if(hwnd==IntPtr.Zero||!IsWindow(hwnd))throw new InvalidOperationException("块窗口已销毁。");
+  SetLastError(0);var previous=SetParent(hwnd,IntPtr.Zero);
+  if(previous==IntPtr.Zero&&Marshal.GetLastWin32Error()!=0)throw Failure("块揭开失败");
+  // Microsoft: after SetParent(NULL), clear WS_CHILD and set WS_POPUP.
+  SetStyle(hwnd,Style,(GetLong(hwnd,Style).ToInt64()&~Child)|Popup);
+  if(!SetWindowPos(hwnd,TopmostAfter,bounds.Left,bounds.Top,bounds.Width,bounds.Height,NoActivatePosition|FrameChanged|0x40))throw Failure("块置顶失败");
+  Log("reveal hwnd="+hwnd);
+ }
+ public static bool IsVisible(IntPtr hwnd){return hwnd!=IntPtr.Zero&&IsWindowVisible(hwnd);}
  public static void Raise(IntPtr hwnd){
   var parent=Parent();
   if(GetParent(hwnd)!=parent)throw new InvalidOperationException("桌面宿主已改变，需要重新挂载壁纸窗口。");

@@ -126,7 +126,8 @@ public partial class MainWindow : Window {
  // later from the tray, and its Loaded must not restore a second time).
  void Startup(){
   if(started)return;started=true;
-  if(testMode){Hide();var a=Environment.GetCommandLineArgs();int at=Array.IndexOf(a,"--test-file");if(at>=0&&at+1<a.Length){string f=Path.GetFullPath(a[at+1]);items=new List<Item>{new Item(){Title=Path.GetFileName(f),Type=Item.TypeOf(f),File=f,Preview=""}};Bind();library.SelectedIndex=0;}if(a.Contains("--test-transitions"))TestTransitions();else if(a.Contains("--test-library"))TestLibrary();else RunTest();return;}
+  if(testMode){Hide();var a=Environment.GetCommandLineArgs();int at=Array.IndexOf(a,"--test-file");if(at>=0&&at+1<a.Length){string f=Path.GetFullPath(a[at+1]);items=new List<Item>{new Item(){Title=Path.GetFileName(f),Type=Item.TypeOf(f),File=f,Preview=""}};Bind();library.SelectedIndex=0;}if(a.Contains("--test-desktop"))TestDesktop();else if(a.Contains("--test-transitions"))TestTransitions();else if(a.Contains("--test-library"))TestLibrary();else RunTest();return;}
+  if(DesktopIcons.RecoverAfterCrash())SetStatus("上次 AWall 隐藏桌面图标后异常退出，已恢复桌面图标。");
   RepairAutostart();wallpaper.ResetRotationClock();
   if(autostartLaunch)RestoreAfterLogin();else RestoreLayout();
  }
@@ -250,6 +251,6 @@ public partial class MainWindow : Window {
   if(tray!=null)tray.Text=Shorten("AWall · "+text,63);
  }
  void SetStatus(string s){status.Text=s;status.ToolTip=s;UpdateNowPlaying();System.IO.File.AppendAllText(Path.Combine(data,"AWall.log"),DateTime.Now.ToString("s")+" "+s+Environment.NewLine);}
- void Exit(){exiting=true;wallpaper.Shutdown();SystemEvents.UserPreferenceChanged-=PreferenceChanged;tray.Dispose();Application.Current.Shutdown();}
+ void Exit(){exiting=true;DesktopIcons.Restore();wallpaper.Shutdown();SystemEvents.UserPreferenceChanged-=PreferenceChanged;tray.Dispose();Application.Current.Shutdown();}
 }
 }
