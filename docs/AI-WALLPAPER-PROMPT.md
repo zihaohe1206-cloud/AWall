@@ -42,6 +42,14 @@ if (window.awall) { Object.assign(P, awall.properties); awall.onProperty = (k, v
 
 ---
 
+## 不需要动画的壁纸
+
+如果画面只需要几分钟变一次（数据可视化、日历、名言），把上面第 4、5 条换成下面这条，AWall 就不会让页面一直运行：
+
+> 在 `<head>` 里加 `<meta name="awall-present" content="interval=300">`。页面每次加载时只画一帧当前状态，不要用 `requestAnimationFrame` 循环。加载完成约 1 秒后，AWall 会截图，把截图设为系统壁纸，然后关闭页面；300 秒后重新加载并截图。间隔最少 60 秒。如果画面完全不变，写 `content="static"`。
+
+---
+
 ## AWall 会对页面做什么
 
 - jsdelivr / unpkg / cdnjs 上的库文件第一次使用时自动下载，缓存到 `library\web-cache\`，之后离线读取。只接受 JS / JSON / CSS / WASM，单个文件最大 50MB；其余外部请求一律拦截。

@@ -334,6 +334,8 @@ public sealed class ScenePlayer : IDisposable {
   catch(Exception ex){Write("PROPERTY "+ex.Message);}finally{propsBusy=false;}
  }
  public async void Pointer(double u,double v){if(IsVideo||!Ready||disposed||paused==true||pointerBusy)return;pointerBusy=true;try{await View.CoreWebView2.ExecuteScriptAsync("window.awallPointer("+u.ToString(System.Globalization.CultureInfo.InvariantCulture)+","+v.ToString(System.Globalization.CultureInfo.InvariantCulture)+")");}catch{}finally{pointerBusy=false;}}
+ // Lossless frame for the snapshot route (handed to Windows as the wallpaper). WebView2 pages only.
+ public async Task<string> SnapshotPng(string path){if(mpv!=null||disposed||!Ready||View.CoreWebView2==null)throw new InvalidOperationException(Kind+" 尚未显示首帧。");using(var file=File.Create(path))await View.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,file);return path;}
  public async Task<string> Snapshot(string path){if(mpv!=null)return await mpv.Snapshot(path);if(!Ready)throw new InvalidOperationException(Kind+" 尚未显示首帧。");using(var file=File.Create(path))await View.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Jpeg,file);return path;}
  public async Task<BitmapSource> CaptureFrame(){
   if(mpv!=null)return await mpv.CaptureFrame();

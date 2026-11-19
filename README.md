@@ -62,11 +62,14 @@ AWall 运行时，可以用 `bin/AWallCmd.exe` 从终端、脚本或 agent 执�
 
 ### 素材与兼容性
 
-本地素材库位于 `library/wallpapers/`，下设 `mp4/`、`pkg/` 和 `html/`。可放置同名 `.jpg`、`.gif` 或 `.png` 作为预览图，PKG 可附带同名 `.json` 保存原 `project.json`。旧版 `library/wallpaper-engine/` 结构可用 `tools/Migrate-Library.ps1` 整理，默认预览，加 `-Apply` 才执行。
+本地素材库位于 `library/wallpapers/`，下设 `mp4/`、`pkg/`、`html/` 和 `image/`。可放置同名 `.jpg`、`.gif` 或 `.png` 作为预览图，PKG 可附带同名 `.json` 保存原 `project.json`。旧版 `library/wallpaper-engine/` 结构可用 `tools/Migrate-Library.ps1` 整理，默认预览，加 `-Apply` 才执行。
 
 - **MP4** 默认使用 WebView2 内置播放器，也可在包含 mpv 的构建中切换播放器。
 - **PKG** 使用 WebWallGL 和 WebView2 兼容渲染，部分特效、模型和 SceneScript 可能与官方引擎有差异。需要 Wallpaper Engine 共享资源时，将其安装目录下的 `assets` 复制到 `library/we-assets/`。
 - **HTML** 使用 WebView2 渲染，默认限制至 30 FPS。支持通过 `awall-properties` 声明可调参数。仅允许从 jsDelivr、unpkg 和 cdnjs 加载指定类型的库文件，首次下载后缓存在 `library/web-cache/`。格式、运行约束和示例见 [AI 网页壁纸生成指南](docs/AI-WALLPAPER-PROMPT.md)。
+- **图片**（jpg / jpeg / png / bmp）直接设为 Windows 系统壁纸，AWall 不参与渲染，也不占资源。导入时复制到 `library/wallpapers/image/`。
+- **只需几分钟变一次的网页**（数据图、日历之类）在 `<head>` 里加 `<meta name="awall-present" content="interval=300">`：AWall 每 300 秒（最少 60 秒）在后台渲染一张图，设为系统壁纸后立即释放渲染器。`content="static"` 表示只渲染一次。
+- 每块显示器各自选择呈现方式，可以一块屏播视频、另一块屏用图片。
 - 当前仅支持静态锁屏快照。`application` 类壁纸、系统音频频谱、Now Playing 和鼠标点击尚未接入。全屏自动暂停当前按全局处理。
 
 素材、缓存和共享资源留在本机，`library/` 已被 Git 忽略。请使用自己信任的素材。

@@ -79,7 +79,7 @@ public partial class WallpaperService {
  // ---- Lifecycle
  public void Start(){
   SystemEvents.SessionSwitch+=SessionChanged;SystemEvents.DisplaySettingsChanged+=DisplayChanged;
-  timer=new DispatcherTimer(){Interval=TimeSpan.FromSeconds(2)};timer.Tick+=delegate{Tick();RotationTick();};timer.Start();
+  timer=new DispatcherTimer(){Interval=TimeSpan.FromSeconds(2)};timer.Tick+=delegate{Tick();RotationTick();StaticTick();};timer.Start();
   pointerTimer=new DispatcherTimer(){Interval=TimeSpan.FromMilliseconds(50)};pointerTimer.Tick+=delegate{ForwardPointer();};pointerTimer.Start();
  }
  // Self-tests drive playback themselves.
@@ -120,10 +120,13 @@ public partial class WallpaperService {
   return plan;
  }
  bool Healthy(Player p,Forms.Screen[] screens){return !p.IsClosed&&p.Ready&&!p.Failed&&screens.Any(s=>s.DeviceName==p.Monitor.DeviceName&&s.Bounds==p.Monitor.Bounds);}
- // True when every display already plays exactly this plan.
+ // True when every display already shows exactly this plan: live displays by a healthy player,
+ // static ones by the image AWall handed to Windows.
  bool PlayingPlan(Dictionary<string,Item> plan){
-  var screens=Forms.Screen.AllScreens;
-  return players.Count==screens.Length&&players.All(p=>Healthy(p,screens)&&plan.ContainsKey(p.Monitor.DeviceName)&&SameItem(p.Item,plan[p.Monitor.DeviceName]));
+  var screens=Forms.Screen.AllScreens;if(!screens.All(s=>plan.ContainsKey(s.DeviceName)&&plan[s.DeviceName]!=null))return false;
+  var live=screens.Where(s=>IsLive(plan[s.DeviceName])).ToArray();
+  return players.Count==live.Length&&players.All(p=>Healthy(p,screens)&&live.Any(s=>s.DeviceName==p.Monitor.DeviceName)&&SameItem(p.Item,plan[p.Monitor.DeviceName]))
+   &&screens.Where(s=>!IsLive(plan[s.DeviceName])).All(s=>StaticShows(s.DeviceName,plan[s.DeviceName]));
  }
  static string PlanTitle(Dictionary<string,Item> plan){var distinct=plan.Values.GroupBy(x=>ItemKey(x)).Select(g=>g.First()).ToList();return distinct.Count==1?distinct[0].Title:distinct.Count+" 个壁纸";}
 
@@ -154,14 +157,26 @@ public partial class WallpaperService {
   CancelTransition();
   transitionClock=Stopwatch.StartNew();preparationMs=0;TransitionLog("begin");
   int version=++transitionVersion;previousManualPause=manualPause;
+  // Live displays get players; the others are drawn by Windows (WallpaperService.Static.cs).
+  var liveScreens=screens.Where(s=>IsLive(plan[s.DeviceName])).ToArray();
+  var staticScreens=screens.Where(s=>!IsLive(plan[s.DeviceName])).ToArray();
   var keep=new HashSet<Player>();
-  if(!force&&!swapping)foreach(var p in players)if(Healthy(p,screens)&&Native.IsWindow(p.Handle)&&plan.ContainsKey(p.Monitor.DeviceName)&&SameItem(p.Item,plan[p.Monitor.DeviceName]))keep.Add(p);
-  var fresh=screens.Where(s=>!keep.Any(p=>p.Monitor.DeviceName==s.DeviceName)).ToArray();
+  if(!force&&!swapping)foreach(var p in players)if(Healthy(p,screens)&&Native.IsWindow(p.Handle)&&plan.ContainsKey(p.Monitor.DeviceName)&&IsLive(plan[p.Monitor.DeviceName])&&SameItem(p.Item,plan[p.Monitor.DeviceName]))keep.Add(p);
+  var fresh=liveScreens.Where(s=>!keep.Any(p=>p.Monitor.DeviceName==s.DeviceName)).ToArray();
+  var freshStatic=staticScreens.Where(s=>force||!StaticShows(s.DeviceName,plan[s.DeviceName])).ToArray();
+  var changing=fresh.Concat(freshStatic).ToArray();
   if(keep.Count>0)TransitionLog("kept "+keep.Count+" display(s)");
+  if(staticScreens.Length>0)TransitionLog("static "+staticScreens.Length+" display(s), "+freshStatic.Length+" to set");
   previousPlayers=players.Where(p=>!keep.Contains(p)).ToList();previousLayout=layout;
   players=new List<Player>(keep);layout=plan;kept=keep;announced=new HashSet<Player>();manualPause=false;transitioning=true;
-  var batch=players;bool coversReady=false;
-  Action finish=delegate{if(!coversReady||version!=transitionVersion||players!=batch||!transitioning||fading||batch.Count!=screens.Length||!batch.All(x=>x.Ready))return;try{TransitionLog("all-content-ready");foreach(var ready in batch)if(!keep.Contains(ready))ready.Present();TransitionLog("attached");foreach(var cover in covers)cover.Raise();StopTransitionTimer();BeginFade(batch,version);}catch(Exception e){CancelTransition();Say("桌面挂载失败，已恢复原壁纸："+e.Message);}};
+  var batch=players;bool coversReady=false;int liveCount=liveScreens.Length;
+  var staticWork=new Task<string>[0];bool staticDone=true;
+  Action finish=delegate{if(!coversReady||!staticDone||version!=transitionVersion||players!=batch||!transitioning||fading||batch.Count!=liveCount||!batch.All(x=>x.Ready))return;try{TransitionLog("all-content-ready");
+    // Static displays: hand the image to Windows, then drop the old player under the cover so the fade reveals it.
+    for(int i=0;i<freshStatic.Length;i++){var screen=freshStatic[i];CommitStatic(screen,plan[screen.DeviceName],staticWork[i].Result);foreach(var old in previousPlayers.Where(x=>x.Monitor.DeviceName==screen.DeviceName).ToArray()){previousPlayers.Remove(old);old.Close();}}
+    if(freshStatic.Length>0)TransitionLog("system-wallpaper "+freshStatic.Length+" display(s)");
+    foreach(var s in liveScreens)statics.Remove(s.DeviceName);
+    foreach(var ready in batch)if(!keep.Contains(ready))ready.Present();TransitionLog("attached");foreach(var cover in covers)cover.Raise();StopTransitionTimer();BeginFade(batch,version);}catch(Exception e){CancelTransition();Say("桌面挂载失败，已恢复原壁纸："+e.Message);}};
   finishTransition=finish;
   transitionTimer=new DispatcherTimer(){Interval=TimeSpan.FromSeconds(60)};
   transitionTimer.Tick+=delegate{if(transitioning&&players==batch){CancelTransition();Say("壁纸加载超时，已保留原壁纸。");}};transitionTimer.Start();
@@ -171,7 +186,8 @@ public partial class WallpaperService {
    // before coversReady, so the visual barrier is unchanged, but WebView2
    // browser startup / mpv startup now overlaps capture + cover setup.
    TransitionLog("capture-start");var oldBatch=previousPlayers.ToArray();
-   var capture=Task.WhenAll(fresh.Select(screen=>CaptureBackdrop(screen,oldBatch)).ToArray());
+   var capture=Task.WhenAll(changing.Select(screen=>CaptureBackdrop(screen,oldBatch)).ToArray());
+   if(freshStatic.Length>0){staticDone=false;staticWork=freshStatic.Select(s=>PrepareStatic(plan[s.DeviceName],s)).ToArray();WhenStaticReady(staticWork,version,delegate{staticDone=true;finish();});}
    TransitionLog("backends-start");
    foreach(var screen in fresh){var wanted=plan[screen.DeviceName];var p=TakeStandby(wanted,screen)??new Player(wanted,screen);Hook(p);batch.Add(p);p.Show();}
    // With a pre-started standby the new scene is often ready before the old
@@ -181,20 +197,20 @@ public partial class WallpaperService {
    long readyAt=-1;
    while(!capture.IsCompleted){
     if(version!=transitionVersion)return;
-    if(batch.Count==screens.Length&&batch.All(x=>x.Ready)){if(readyAt<0)readyAt=transitionClock.ElapsedMilliseconds;else if(transitionClock.ElapsedMilliseconds-readyAt>=100)break;}
+    if(staticDone&&batch.Count==liveCount&&batch.All(x=>x.Ready)){if(readyAt<0)readyAt=transitionClock.ElapsedMilliseconds;else if(transitionClock.ElapsedMilliseconds-readyAt>=100)break;}
     await Task.WhenAny(capture,Task.Delay(25));
    }
    if(version!=transitionVersion)return;
    if(capture.IsCompleted&&!capture.IsFaulted&&!capture.IsCanceled){
     var frames=capture.Result;TransitionLog("capture-done");
-    for(int i=0;i<fresh.Length;i++){var cover=new TransitionCover(fresh[i],frames[i]);covers.Add(cover);cover.Show();}
+    for(int i=0;i<changing.Length;i++){var cover=new TransitionCover(changing[i],frames[i]);covers.Add(cover);cover.Show();}
     await dispatcher.InvokeAsync(delegate{},DispatcherPriority.Render);await Task.Delay(50);if(version!=transitionVersion)return;
    }else{TransitionLog("covers-skipped capture-pending");capture.ContinueWith(t=>{var ignored=t.Exception;},TaskContinuationOptions.OnlyOnFaulted);}
    foreach(var old in oldBatch)old.Pause(true);
    preparationMs=transitionClock.Elapsed.TotalMilliseconds;TransitionLog("covers-ready");
    coversReady=true;finish();
-   var shown=fresh.Length>0?plan[fresh[0].DeviceName]:PrimaryItem(plan);
-   Say((shown.Type=="scene"?"正在加载 PKG：":shown.Type=="web"?"正在加载网页：":"正在加载 MP4：")+shown.Title+(screens.Length>1&&fresh.Length<screens.Length?"（"+fresh.Length+" 块显示器）":"")+"。锁屏图片需点击“同步锁屏快照”。");}catch{if(version!=transitionVersion)return;CancelTransition();throw;}
+   var shown=changing.Length>0?plan[changing[0].DeviceName]:PrimaryItem(plan);var route=RouteOf(shown);
+   Say((route==PresentRoute.SystemWallpaper?"正在设为系统壁纸：":route==PresentRoute.SnapshotToSystemWallpaper?"正在渲染网页快照：":shown.Type=="scene"?"正在加载 PKG：":shown.Type=="web"?"正在加载网页：":"正在加载 MP4：")+shown.Title+(screens.Length>1&&changing.Length<screens.Length?"（"+changing.Length+" 块显示器）":"")+"。锁屏图片需点击“同步锁屏快照”。");}catch{if(version!=transitionVersion)return;CancelTransition();throw;}
  }
  void Hook(Player p){p.Report=delegate(string message){PlayerReport(p,message);};}
  // Reports from any live player (kept or new). A failure during a transition rolls back; a failure
@@ -251,7 +267,7 @@ public partial class WallpaperService {
   var next=pendingPlan;pendingPlan=null;
   if(version!=transitionVersion||players!=batch)return;
   for(int i=0;i<targets.Count;i++)if(results[i])targets[i].Item=plan[targets[i].Monitor.DeviceName];
-  layout=LayoutOf(players);
+  layout=WithStatics(LayoutOf(players));
   if(results.All(x=>x)){manualPause=false;Tick();SaveLayout();TransitionLog("swap-complete");Say("壁纸切换完成。");}
   else if(results.Any(x=>x)){TransitionLog("swap-partial rebuild");await ApplyPlanAsync(true,plan);return;}
   else{string error=String.Join("；",targets.Select(p=>p.Scene.LastSwapError).Where(x=>!String.IsNullOrEmpty(x)).Distinct().ToArray());TransitionLog("swap-failed "+error);Say("壁纸加载失败，已保留原壁纸："+error);}
@@ -265,6 +281,9 @@ public partial class WallpaperService {
  }
  void PrepareStandby(){
   if(TestMode||exiting||transitioning)return;
+  // Only images / snapshots on screen: Windows draws everything, so do not keep an idle browser around.
+  // The next PKG switch then starts cold.
+  if(players.Count==0&&statics.Count>0){if(standbys.Count>0){CloseStandbys();TransitionLog("standby-closed static-only");}return;}
   var screens=Forms.Screen.AllScreens;
   foreach(var key in standbys.Keys.ToArray()){var old=standbys[key];if(!old.IsClosed&&!old.Failed&&screens.Any(s=>s.DeviceName==key&&s.Bounds==old.Monitor.Bounds))continue;standbys.Remove(key);try{old.Close();}catch{}}
   foreach(var screen in screens){if(standbys.ContainsKey(screen.DeviceName))continue;
@@ -282,14 +301,15 @@ public partial class WallpaperService {
   finally{foreach(var p in pending)if(!keep.Contains(p)&&!p.IsClosed)p.Close();CloseCovers();}
   // Kept players never stopped showing their wallpaper; they simply stay.
   foreach(var p in keep){if(p.IsClosed||p.Failed){if(!p.IsClosed)p.Close();}else players.Add(p);}
-  layout=LayoutOf(players);
+  // Static displays only change when a transition commits, so they still show what `statics` says.
+  layout=WithStatics(LayoutOf(players));
   Tick();
  }
 
  // ---- Stop, pause
  // "停止壁纸": close everything and forget the saved layout.
  public void Stop(){if(Current==null&&players.Count==0&&previousPlayers.Count==0&&!transitioning&&!swapping){Notify();return;}StopPlayback(true);}
- internal void StopPlayback(bool clearLayout){recoveryPlan=null;recoveryAttempts=0;++transitionVersion;transitioning=false;finishTransition=null;StopTransitionTimer();StopFade();CloseCovers();var all=previousPlayers.Concat(players).Distinct().ToArray();players=new List<Player>();previousPlayers=new List<Player>();layout=new Dictionary<string,Item>();previousLayout=new Dictionary<string,Item>();kept=new HashSet<Player>();foreach(var p in all)p.Close();if(clearLayout)try{File.Delete(LayoutPath);}catch(Exception e){Say("清除壁纸布局失败："+e.Message);}Say("动态壁纸已停止。");}
+ internal void StopPlayback(bool clearLayout){recoveryPlan=null;recoveryAttempts=0;++transitionVersion;transitioning=false;finishTransition=null;StopTransitionTimer();StopFade();CloseCovers();var all=previousPlayers.Concat(players).Distinct().ToArray();players=new List<Player>();previousPlayers=new List<Player>();layout=new Dictionary<string,Item>();previousLayout=new Dictionary<string,Item>();kept=new HashSet<Player>();statics.Clear();foreach(var p in all)p.Close();if(clearLayout)try{File.Delete(LayoutPath);}catch(Exception e){Say("清除壁纸布局失败："+e.Message);}Say("动态壁纸已停止。");}
  public void SetPaused(bool value){manualPause=value;Tick();SaveLayout();}
  public void SetPauseWhenCovered(bool value){pauseWhenCovered=value;SaveLayout();}
 
@@ -318,7 +338,10 @@ public partial class WallpaperService {
  void DisplayChanged(object s,EventArgs e){dispatcher.BeginInvoke(new Action(delegate{string next=ScreenTopology();if(next!=topology){topology=next;var handler=DisplaysChanged;if(handler!=null)handler();if(Current!=null)RebuildDesktop();}}));}
 
  // ---- Things done with the playing wallpaper
- public async void SyncLock(){if(players.Count==0){Say("请先加载 MP4 或 PKG，再同步锁屏快照。");return;}try{var p=players.FirstOrDefault(x=>x.Monitor.Primary)??players[0];string image=await p.Snapshot(Path.Combine(data,"lock-"+Guid.NewGuid().ToString("N")+".jpg"));Say("正在保存锁屏快照…");string result=Path.Combine(data,"lock-result.txt");int code=await LockScreen.Apply(image,result);Say(code==0?"锁屏静态快照已同步。Win+L 后显示图片，不播放视频。":"锁屏设置失败，详情见 "+result);}catch(Exception e){Say(e.Message);}}
+ public async void SyncLock(){if(!CanSyncLock){Say("请先加载壁纸，再同步锁屏快照。");return;}try{
+   // A static primary display already has the image Windows shows; otherwise capture a player's frame.
+   var primary=Forms.Screen.PrimaryScreen;string image=primary==null?null:StaticImage(primary.DeviceName);
+   if(image==null){if(players.Count==0)image=statics.Values.First().Image;else{var p=players.FirstOrDefault(x=>x.Monitor.Primary)??players[0];image=await p.Snapshot(Path.Combine(data,"lock-"+Guid.NewGuid().ToString("N")+".jpg"));}}Say("正在保存锁屏快照…");string result=Path.Combine(data,"lock-result.txt");int code=await LockScreen.Apply(image,result);Say(code==0?"锁屏静态快照已同步。Win+L 后显示图片，不播放视频。":"锁屏设置失败，详情见 "+result);}catch(Exception e){Say(e.Message);}}
  // A parameter of an HTML wallpaper changed: apply it live wherever that wallpaper plays.
  public void SetWebProperty(Item item,string name,object value){foreach(var p in players)if(p.Scene!=null&&SameItem(p.Item,item))p.Scene.SetProperty(name,value);}
  // HTML wallpapers arrive without a preview: save the primary monitor's frame as <name>.jpg

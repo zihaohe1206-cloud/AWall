@@ -23,6 +23,8 @@ public static class StartupBackdrop {
  public static BitmapSource Capture(Forms.Screen screen){
   string path="",style="10",tile="0",rgb="0 0 0";
   using(var key=Registry.CurrentUser.OpenSubKey(@"Control Panel\Desktop")){if(key!=null){path=Convert.ToString(key.GetValue("WallPaper",""));style=Convert.ToString(key.GetValue("WallpaperStyle","10"));tile=Convert.ToString(key.GetValue("TileWallpaper","0"));}}
+  // Each display can have its own image (IDesktopWallpaper); the registry only holds the last one set.
+  string own=SystemWallpaper.Get(screen);if(!String.IsNullOrEmpty(own)&&File.Exists(own))path=own;
   using(var key=Registry.CurrentUser.OpenSubKey(@"Control Panel\Colors")){if(key!=null)rgb=Convert.ToString(key.GetValue("Background","0 0 0"));}
   var parts=rgb.Split(new[]{' '},StringSplitOptions.RemoveEmptyEntries);byte r=0,g=0,b=0;
   var color=parts.Length==3&&byte.TryParse(parts[0],out r)&&byte.TryParse(parts[1],out g)&&byte.TryParse(parts[2],out b)?Color.FromRgb(r,g,b):Colors.Black;

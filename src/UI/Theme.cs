@@ -21,9 +21,9 @@ namespace AWall {
 public static class Theme {
  // Status colours that read well on both palettes.
  public static readonly SolidColorBrush Ok=Hex("#22C38E"),Warn=Hex("#F5B014"),Idle=Hex("#8A93A6"),Accent=Hex("#7C6CFF");
- static readonly string[] Keys={"Bg","Surface","Line","Text","Muted","Faint","PreviewBack","Hover","Selected","SelectedLine","ButtonBack","ButtonLine","InputBack","TrackOff","KnobOff","ScrollThumb","ScrollThumbHover","IconFaint","Overlay","Accent","DangerFore","DangerBack","DangerLine","VideoBack","VideoFore","SceneBack","SceneFore","WebBack","WebFore"};
- const string DarkColors="#0E131E #151B29 #252E43 #E8ECF5 #97A1B7 #667089 #0A0E17 #1B2234 #242D46 #323D5C #1F273A #2C364E #0F1421 #2A3349 #AEB7CB #323C55 #4A5676 #343E57 #FFFFFF #8B7CFF #FF9EAA #2A1D29 #4A2A3C #123A40 #5EEAD4 #2B2558 #B3A8FF #252C3C #8C97AD";
- const string LightColors="#F3F5FA #FFFFFF #E2E6EF #1A2030 #5A6478 #8A93A6 #EEF1F6 #F1F3F8 #EDEAFF #D6D0FF #F4F6FA #DDE2EC #F6F7FB #D3D9E4 #FFFFFF #CBD2DF #AEB7C8 #C3CAD8 #000000 #6D55F5 #C2334A #FDECEF #F5C6CF #DDF7F2 #0F8B7A #ECE8FF #5B45D6 #EEF0F4 #6B7385";
+ static readonly string[] Keys={"Bg","Surface","Line","Text","Muted","Faint","PreviewBack","Hover","Selected","SelectedLine","ButtonBack","ButtonLine","InputBack","TrackOff","KnobOff","ScrollThumb","ScrollThumbHover","IconFaint","Overlay","Accent","DangerFore","DangerBack","DangerLine","VideoBack","VideoFore","SceneBack","SceneFore","WebBack","WebFore","ImageBack","ImageFore"};
+ const string DarkColors="#0E131E #151B29 #252E43 #E8ECF5 #97A1B7 #667089 #0A0E17 #1B2234 #242D46 #323D5C #1F273A #2C364E #0F1421 #2A3349 #AEB7CB #323C55 #4A5676 #343E57 #FFFFFF #8B7CFF #FF9EAA #2A1D29 #4A2A3C #123A40 #5EEAD4 #2B2558 #B3A8FF #252C3C #8C97AD #3A2F14 #F5C66B";
+ const string LightColors="#F3F5FA #FFFFFF #E2E6EF #1A2030 #5A6478 #8A93A6 #EEF1F6 #F1F3F8 #EDEAFF #D6D0FF #F4F6FA #DDE2EC #F6F7FB #D3D9E4 #FFFFFF #CBD2DF #AEB7C8 #C3CAD8 #000000 #6D55F5 #C2334A #FDECEF #F5C6CF #DDF7F2 #0F8B7A #ECE8FF #5B45D6 #EEF0F4 #6B7385 #FFF3D6 #8A5A00";
  public static ResourceDictionary Palette(bool dark){var palette=new ResourceDictionary();var colors=(dark?DarkColors:LightColors).Split(' ');for(int i=0;i<Keys.Length;i++)palette[Keys[i]]=Hex(colors[i]);return palette;}
  // Windows "app mode" setting; AppsUseLightTheme=0 means dark. Missing value = light (Windows default).
  public static bool SystemPrefersDark(){
@@ -202,6 +202,7 @@ public static class Theme {
   <DataTemplate.Triggers>
    <DataTrigger Binding='{Binding Badge}' Value='MP4'><Setter TargetName='badge' Property='Background' Value='{DynamicResource VideoBack}'/><Setter TargetName='badgeText' Property='Foreground' Value='{DynamicResource VideoFore}'/></DataTrigger>
    <DataTrigger Binding='{Binding Badge}' Value='PKG'><Setter TargetName='badge' Property='Background' Value='{DynamicResource SceneBack}'/><Setter TargetName='badgeText' Property='Foreground' Value='{DynamicResource SceneFore}'/></DataTrigger>
+   <DataTrigger Binding='{Binding Badge}' Value='IMG'><Setter TargetName='badge' Property='Background' Value='{DynamicResource ImageBack}'/><Setter TargetName='badgeText' Property='Foreground' Value='{DynamicResource ImageFore}'/></DataTrigger>
   </DataTemplate.Triggers>
  </DataTemplate>
  <Style x:Key='SearchBox' TargetType='TextBox'>

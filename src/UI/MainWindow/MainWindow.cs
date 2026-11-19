@@ -186,11 +186,17 @@ public partial class MainWindow : Window {
  static void SetButtonText(Button b,string text){if(b==null)return;var content=b.Content as StackPanel;if(content!=null&&content.Children.Count>1)((TextBlock)content.Children[1]).Text=text;}
  static string Shorten(string text,int max){text=text??"";return text.Length>max?text.Substring(0,max-1)+"…":text;}
  void ShowMain(){if(exiting)return;if(!IsVisible)Show();if(WindowState==WindowState.Minimized)WindowState=WindowState.Normal;Activate();Topmost=true;Topmost=false;Focus();}
+ static string WebMeta(Item item){
+  var present=WebPresent.Of(item.File);
+  if(WallpaperService.RouteOf(item)==PresentRoute.SnapshotToSystemWallpaper)
+   return present.Mode==PresentMode.Interval?"网页 · 快照档：每 "+present.IntervalSeconds+" 秒离屏渲染一次，设为系统壁纸":"网页 · 静态：渲染一次后设为系统壁纸";
+  return "网页 · WebView2 离线渲染（首次播放后自动生成预览图）";
+ }
  void ShowDetail(Item item){
   if(item==null)return;
   detailTitle.Text=String.IsNullOrEmpty(item.Title)?"未命名素材":item.Title;detailTitle.ToolTip=item.Title;
   badge.Visibility=Visibility.Visible;badge.SetResourceReference(Border.BackgroundProperty,item.BadgeKey+"Back");badgeText.SetResourceReference(TextBlock.ForegroundProperty,item.BadgeKey+"Fore");badgeText.Text=item.Badge;
-  detailMeta.Text=item.Type=="video"?(MpvActive?"视频 · mpv 硬件解码":"视频 · 内置播放器（WebView2 硬件解码）"):item.Type=="scene"?"PKG 场景 · WebGL 兼容渲染（非官方引擎）":"网页 · WebView2 离线渲染（首次播放后自动生成预览图）";
+  detailMeta.Text=item.Type=="video"?(MpvActive?"视频 · mpv 硬件解码":"视频 · 内置播放器（WebView2 硬件解码）"):item.Type=="scene"?"PKG 场景 · WebGL 兼容渲染（非官方引擎）":item.Type=="image"?"图片 · 设为 Windows 系统壁纸（AWall 不参与渲染）":WebMeta(item);
   detailFile.Text=Path.GetFileName(item.File??"");detailFile.ToolTip=item.File;
   propsButton.Visibility=item.Type=="web"&&WebProperties.Parse(item).Count>0?Visibility.Visible:Visibility.Collapsed;
   SetButtonText(rotationItemButton,wallpaper.InRotation(item)?"移出轮播":"加入轮播");

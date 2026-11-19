@@ -97,9 +97,13 @@ public static class PresentPolicy {
  // Setting the system wallpaper writes a file and may fade, so snapshots are for minutes, not seconds.
  public const int MinSnapshotSeconds=60;
  public static PresentRoute Choose(BlockManifest block){
-  if(block==null||block.Layer!=DesktopLayer.Wallpaper||block.Interactive)return PresentRoute.LiveWindow;
-  if(block.Present==PresentMode.Static)return PresentRoute.SystemWallpaper;
-  if(block.Present==PresentMode.Interval&&block.IntervalSeconds>=MinSnapshotSeconds)return PresentRoute.SnapshotToSystemWallpaper;
+  if(block==null)return PresentRoute.LiveWindow;
+  return Choose(block.Layer,block.Present,block.IntervalSeconds,block.Interactive);
+ }
+ public static PresentRoute Choose(DesktopLayer layer,PresentMode present,int intervalSeconds,bool interactive){
+  if(layer!=DesktopLayer.Wallpaper||interactive)return PresentRoute.LiveWindow;
+  if(present==PresentMode.Static)return PresentRoute.SystemWallpaper;
+  if(present==PresentMode.Interval&&intervalSeconds>=MinSnapshotSeconds)return PresentRoute.SnapshotToSystemWallpaper;
   return PresentRoute.LiveWindow;
  }
 }

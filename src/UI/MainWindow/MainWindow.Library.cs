@@ -20,7 +20,7 @@ using Forms = System.Windows.Forms;
 namespace AWall {
 // Library glue: import dialogs, Wallpaper Engine import, scan. File logic is in Core/Library.
 public partial class MainWindow {
- void Import(){var dialog=new Microsoft.Win32.OpenFileDialog(){Filter="壁纸文件|*.mp4;*.pkg;*.html;*.htm|MP4 视频|*.mp4|PKG 场景|*.pkg|HTML 网页|*.html;*.htm",Multiselect=true};if(dialog.ShowDialog()==true){foreach(string picked in dialog.FileNames){string file=Item.TypeOf(picked)=="web"?LibraryScanner.CopyIntoLibrary(root,picked):picked;var item=items.FirstOrDefault(x=>String.Equals(x.File,file,StringComparison.OrdinalIgnoreCase));if(item==null){item=new Item(){Title=Path.GetFileNameWithoutExtension(file),Type=Item.TypeOf(file),File=file,Preview=Item.TypeOf(file)=="web"?LibraryScanner.SidecarPreview(file):Path.Combine(Path.GetDirectoryName(file),"preview.jpg")};items.Add(item);}Bind();library.SelectedItem=item;}SetStatus("已导入 "+dialog.FileNames.Length+" 个 MP4 / PKG / HTML 文件。");}}
+ void Import(){var dialog=new Microsoft.Win32.OpenFileDialog(){Filter="壁纸文件|*.mp4;*.pkg;*.html;*.htm;*.jpg;*.jpeg;*.png;*.bmp|MP4 视频|*.mp4|PKG 场景|*.pkg|HTML 网页|*.html;*.htm|图片|*.jpg;*.jpeg;*.png;*.bmp",Multiselect=true};if(dialog.ShowDialog()==true){foreach(string picked in dialog.FileNames){string type=Item.TypeOf(picked);string file=type=="web"?LibraryScanner.CopyIntoLibrary(root,picked):type=="image"?LibraryScanner.CopyImageIntoLibrary(root,picked):picked;var item=items.FirstOrDefault(x=>String.Equals(x.File,file,StringComparison.OrdinalIgnoreCase));if(item==null){item=new Item(){Title=Path.GetFileNameWithoutExtension(file),Type=type,File=file,Preview=type=="web"?LibraryScanner.SidecarPreview(file):type=="image"?file:Path.Combine(Path.GetDirectoryName(file),"preview.jpg")};items.Add(item);}Bind();library.SelectedItem=item;}SetStatus("已导入 "+dialog.FileNames.Length+" 个文件。");}}
  // Import from Wallpaper Engine (UI + copy logic in WeImport.cs): locate the workshop folder (last used,
  // Steam config, common folders, then a shallow drive search), list compatible items minus duplicates,
  // confirm, then copy into wallpapers\mp4 / wallpapers\pkg.
@@ -63,7 +63,7 @@ public partial class MainWindow {
  }
  void Scan(){
   items=LibraryScanner.Scan(root);Bind();if(items.Count>0)library.SelectedIndex=0;
-  SetStatus("已扫描 "+items.Count+" 个素材，其中 "+items.Count(x=>x.Type=="video")+" 个视频、"+items.Count(x=>x.Type=="scene")+" 个 PKG 场景、"+items.Count(x=>x.Type=="web")+" 个网页。目录："+root);
+  SetStatus("已扫描 "+items.Count+" 个素材，其中 "+items.Count(x=>x.Type=="video")+" 个视频、"+items.Count(x=>x.Type=="scene")+" 个 PKG 场景、"+items.Count(x=>x.Type=="web")+" 个网页、"+items.Count(x=>x.Type=="image")+" 张图片。目录："+root);
   wallpaper.ScheduleStandby();
  }
 }

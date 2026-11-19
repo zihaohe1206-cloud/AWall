@@ -2,7 +2,8 @@
 
 ## 状态
 
-- 阶段：路线图第 3 步（named pipe + `--cmd` 命令行）已实现并通过自动验证，**待用户验收**；之后是第 4 步
+- 阶段：路线图第 3、4 步已实现并通过自动验证，**均待用户验收**；之后是第 5 步（块宿主）
+- 第 4 步：素材库支持图片；HTML 用 `<meta name="awall-present">` 声明静态 / 定时；每块屏独立选呈现档（实时 / 系统壁纸 / 快照）。实现在 `Features/Wallpaper/WallpaperService.Static.cs`、`WebPresent.cs`，约定已写入[架构文档](../ARCHITECTURE.md#2-能静则静三档呈现)
 - 第 3 步：`App/CommandPipe.cs`（管道服务端、客户端、命令行前端）+ 控制台程序 `AWallCmd.exe`；约定已写入[架构文档](../ARCHITECTURE.md#对外入口命令管道与命令行)，用法写入 README
 - 已完成（第 1 步）：分层目录、命令表、桌面模型（层 / 块 / 场景 / 呈现策略）、系统壁纸接口，已写入 [架构文档](../ARCHITECTURE.md)
 - 第 2 步：播放、轮播、布局逻辑已移到 `Features/Wallpaper/WallpaperService`（三个 partial 文件），主窗口只调用它的方法、订阅它的事件。自动回归和手动回归均已通过（多屏未测），见下方“验证”
@@ -139,7 +140,7 @@
 1. ✅ 分层目录、命令表、桌面模型（层 / 块 / 场景 / 呈现策略）、系统壁纸接口。
 2. ✅ 把播放控制器抽成 `WallpaperService`（每一步都跑 `--test-transitions` 和 `--test-library` 回归）。
 3. named pipe + `--cmd` 命令行。已实现，待用户验收。
-4. 接通静态档和快照档：素材库支持图片类型；`present=interval` 的 HTML 定时离屏渲染并设成系统壁纸；按屏混合呈现。
+4. 接通静态档和快照档：素材库支持图片类型；`present=interval` 的 HTML 定时离屏渲染并设成系统壁纸；按屏混合呈现。已实现，待用户验收（多屏混合只在单屏上验证了代码路径）。
 5. 块宿主：先做三个小实验（挂到 DefView、带 WebView2 的窗口换父、HTML 块透明背景）；`AboveIcons` 挂到 DefView；分区（规则 / 文件夹 / 自由）、图标显隐与双击隐藏、原生右键菜单、按壁纸取色；`BelowIcons` 的块合成到一个共享 WebView2 页面；编辑模式；资源管理器右键菜单项；`--test-desktop` 自检。
     - 验收：Explorer 重启和异常退出后桌面完好；只有分区时 CPU 接近 0。
 6. 数据源与场景：先接 `time` / `theme` / `sys` / `idle` / `folder`，再接 `media` / `audio`；场景切换（轮播改为场景内只换壁纸）、待机场景、揭开。
@@ -182,3 +183,20 @@
 - `--test-transitions`：`success: true`，11 项全部通过（自检模式不开管道）。
 
 待用户验收：在自己的终端里试几条命令（例如 `.\bin\AWallCmd.exe help`、`wallpaper.next`、`app.show`），确认 `app.show` 能把窗口带到前台。
+
+### 第 4 步：静态档、快照档与按屏混合呈现（待用户验收）
+
+结果（2026-11-19，单显示器 2560×1440，125% 缩放）：
+
+- 编译通过，只有两个既有警告。`--test-transitions` 在改动后跑了两次，都是 11 项全部通过。
+- 图片（`system-wallpaper.set`，scratchpad 里的 PNG）：0.6 秒完成切换，`route: system-wallpaper`，系统壁纸已更换。
+- 素材库图片：在 `library/wallpapers/image/` 放一张 PNG 后，`library.list` 列出类型为 `image` 的项；`wallpaper.apply` 后状态为 `system-wallpaper`。
+- 快照档（测试页声明 `interval=60`、显示当前时间）：约 2.1 秒完成切换，其中渲染 1.6 秒；`route: snapshot`；截图内容正确，同时生成了素材库预览图。约 60 秒后自动刷新，旧快照被删除，只留一张；这次刷新比预定晚了约一分钟，期间桌面可能被全屏窗口遮挡（遮挡时不刷新）。
+- 测出并修复两个问题：
+  1. 全静态时仍有 PKG 待命播放器（6 个 WebView2 进程）。改为全静态时关闭待命播放器，修复后 AWall 的 WebView2 进程数为 0。
+  2. 离屏快照比屏幕大 23 像素（2583×1463）。改为按显示器像素设置窗口大小，修复后为 2560×1440。
+- 重启 AWall：静态布局照样恢复（重新渲染一次快照）。
+- 收尾：先设回原系统壁纸 `img0.jpg`，再切回动态壁纸“三维点阵海浪”。转码缓存与测试前的备份逐字节一致。测试文件均已删除。
+- 未验证：多显示器混合（例如一块屏视频、一块屏图片），只有一块屏，代码路径只在单屏上走过；锁屏快照没测，以免改动你的锁屏图片。
+
+待用户验收：导入一张图片设为壁纸；写一个带 `<meta name="awall-present" content="interval=60">` 的网页，看是否每分钟更新；有第二块屏时测一块视频、一块图片。

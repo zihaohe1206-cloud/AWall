@@ -11,7 +11,8 @@ namespace AWall {
 public partial class WallpaperService {
  string LayoutPath {get {return Path.Combine(data,TestMode?"wallpaper-layout-test.json":"wallpaper-layout.json");}}
  internal void SaveLayout(){
-  if(transitioning||Current==null||players.Count==0||players.Any(x=>!x.Ready||x.Failed))return;
+  // Displays Windows draws (statics) have no player, so a layout may be saved with none.
+  if(transitioning||Current==null||players.Any(x=>!x.Ready||x.Failed))return;
   try{var primary=Current;
    var value=new SavedLayout(){Title=primary.Title,Type=primary.Type,File=primary.File,Preview=primary.Preview,ManualPause=manualPause,PauseCovered=pauseWhenCovered,
     Screens=layout.Where(x=>x.Value!=null).Select(x=>new SavedScreen(){Device=x.Key,Title=x.Value.Title,Type=x.Value.Type,File=x.Value.File,Preview=x.Value.Preview}).ToList()};
@@ -22,7 +23,7 @@ public partial class WallpaperService {
  // A saved entry as a library item. Layouts saved before the library was reorganised point at
  // files that no longer exist; re-find them by title. Null when nothing usable is left.
  Item FindSaved(string title,string type,string file,string preview){
-  if(String.IsNullOrEmpty(file)||(type!="video"&&type!="scene"&&type!="web"))return null;
+  if(String.IsNullOrEmpty(file)||(type!="video"&&type!="scene"&&type!="web"&&type!="image"))return null;
   var items=Items;
   if(!File.Exists(file)){var moved=items.FirstOrDefault(x=>x.Type==type&&String.Equals(x.Title,title,StringComparison.OrdinalIgnoreCase));if(moved==null)return null;file=moved.File;preview=moved.Preview;}
   var item=items.FirstOrDefault(x=>String.Equals(x.File,file,StringComparison.OrdinalIgnoreCase)&&x.Type==type);
@@ -47,7 +48,7 @@ public partial class WallpaperService {
  // then restore; one retry if nothing could be shown yet.
  public async Task RestoreAfterLoginAsync(){
   await Task.Delay(3000);await RestoreLayoutAsync();await WaitForTransition();
-  if(players.Count==0&&File.Exists(LayoutPath)){TransitionLog("autostart-restore-retry");await Task.Delay(10000);await RestoreLayoutAsync();}
+  if(layout.Count==0&&File.Exists(LayoutPath)){TransitionLog("autostart-restore-retry");await Task.Delay(10000);await RestoreLayoutAsync();}
  }
 }
 }

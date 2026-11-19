@@ -7,18 +7,22 @@ using System.Web.Script.Serialization;
 namespace AWall {
 // Typed library: root\pkg\<name>.pkg (+ <name>.json project, <name>.jpg|gif|png preview), root\mp4\<name>.mp4
 // and root\html\<name>.html (single-file web wallpaper; <name>.jpg preview is generated on first play).
+// root\image\<name>.jpg|jpeg|png|bmp is a still image (shown as the Windows wallpaper; it is its own preview).
 // Falls back to the old per-folder project.json scan only when neither typed folder exists yet.
 // Pure file-system logic: no UI, no playback.
 public static class LibraryScanner {
  static readonly string[] PreviewExts={".jpg",".gif",".png",".jpeg"};
  public static string SidecarPreview(string file){foreach(var ext in PreviewExts){var p=Path.ChangeExtension(file,ext);if(File.Exists(p))return p;}return "";}
- // Sorted: videos, then PKG scenes, then web pages; by title inside each type.
+ // Sorted: videos, then PKG scenes, then web pages, then images; by title inside each type.
  public static List<Item> Scan(string root){
   var items=new List<Item>();
-  string pkgDir=Path.Combine(root,"pkg"),mp4Dir=Path.Combine(root,"mp4"),htmlDir=Path.Combine(root,"html");
-  if(Directory.Exists(pkgDir)||Directory.Exists(mp4Dir)||Directory.Exists(htmlDir)){ScanTyped(items,pkgDir,"*.pkg","scene");ScanTyped(items,mp4Dir,"*.mp4","video");ScanTyped(items,htmlDir,"*.html","web");}
+  string pkgDir=Path.Combine(root,"pkg"),mp4Dir=Path.Combine(root,"mp4"),htmlDir=Path.Combine(root,"html"),imageDir=Path.Combine(root,"image");
+  if(Directory.Exists(pkgDir)||Directory.Exists(mp4Dir)||Directory.Exists(htmlDir)||Directory.Exists(imageDir)){
+   ScanTyped(items,pkgDir,"*.pkg","scene");ScanTyped(items,mp4Dir,"*.mp4","video");ScanTyped(items,htmlDir,"*.html","web");
+   if(Directory.Exists(imageDir))foreach(var file in Directory.GetFiles(imageDir,"*.*",SearchOption.TopDirectoryOnly).Where(Item.IsImageFile))items.Add(new Item(){Title=Path.GetFileNameWithoutExtension(file),Type="image",File=Path.GetFullPath(file),Preview=Path.GetFullPath(file)});
+  }
   else if(Directory.Exists(root))foreach(var file in Directory.GetFiles(root,"project.json",SearchOption.AllDirectories)){try {var j=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(File.ReadAllText(file));var dir=Path.GetDirectoryName(file);string type=j.ContainsKey("type")?Convert.ToString(j["type"]).ToLowerInvariant():"scene";string entry=j.ContainsKey("file")?Convert.ToString(j["file"]):"";var item=new Item(){Title=j.ContainsKey("title")?Convert.ToString(j["title"]):Path.GetFileName(dir),Type=type,File=Path.GetFullPath(Path.Combine(dir,entry)),Preview=Path.Combine(dir,j.ContainsKey("preview")?Convert.ToString(j["preview"]):"preview.jpg")};if(!item.File.StartsWith(dir+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))continue;if(type=="scene"&&!File.Exists(item.File)&&File.Exists(Path.Combine(dir,"scene.pkg")))item.File=Path.Combine(dir,"scene.pkg");items.Add(item);}catch{}}
-  return items.OrderBy(x=>x.Type=="video"?0:x.Type=="scene"?1:2).ThenBy(x=>x.Title).ToList();
+  return items.OrderBy(x=>x.Type=="video"?0:x.Type=="scene"?1:x.Type=="web"?2:3).ThenBy(x=>x.Title).ToList();
  }
  static void ScanTyped(List<Item> items,string folder,string pattern,string type){
   if(!Directory.Exists(folder))return;
@@ -26,11 +30,14 @@ public static class LibraryScanner {
  }
  // AI-generated pages usually sit in Downloads; keep a copy in root\html so the library only depends on its own folder.
  // Returns the library path (an identical existing copy is reused).
- public static string CopyIntoLibrary(string root,string file){
-  string dir=Path.Combine(root,"html");Directory.CreateDirectory(dir);
+ public static string CopyIntoLibrary(string root,string file){return CopyInto(Path.Combine(root,"html"),file,".html");}
+ // Imported images are copied into root\image the same way, so the Windows wallpaper never points at a file the user may move.
+ public static string CopyImageIntoLibrary(string root,string file){return CopyInto(Path.Combine(root,"image"),file,Path.GetExtension(file).ToLowerInvariant());}
+ static string CopyInto(string dir,string file,string ext){
+  Directory.CreateDirectory(dir);dir=Path.GetFullPath(dir);
   if(String.Equals(Path.GetFullPath(Path.GetDirectoryName(file)),dir,StringComparison.OrdinalIgnoreCase))return Path.GetFullPath(file);
-  string name=Path.GetFileNameWithoutExtension(file),target=Path.Combine(dir,name+".html");
-  for(int n=2;File.Exists(target);n++){if(File.ReadAllBytes(target).SequenceEqual(File.ReadAllBytes(file)))return target;target=Path.Combine(dir,name+" ("+n+").html");}
+  string name=Path.GetFileNameWithoutExtension(file),target=Path.Combine(dir,name+ext);
+  for(int n=2;File.Exists(target);n++){if(File.ReadAllBytes(target).SequenceEqual(File.ReadAllBytes(file)))return target;target=Path.Combine(dir,name+" ("+n+")"+ext);}
   File.Copy(file,target);return target;
  }
 }

@@ -24,12 +24,12 @@ public partial class MainWindow {
   commands.Register("wallpaper.toggle-pause","wallpaper.toggle-pause","暂停 / 继续",delegate(CommandArgs a){return SetPause(!wallpaper.Paused);});
   commands.Register("wallpaper.next","wallpaper.next","轮播到下一张",delegate(CommandArgs a){if(current==null)return CommandResult.Fail("当前没有壁纸。");wallpaper.RotateNow(true);return CommandResult.Success("正在切换到下一张。");});
   commands.Register("wallpaper.stop","wallpaper.stop","停止动态壁纸并清除恢复布局",delegate(CommandArgs a){wallpaper.Stop();return CommandResult.Success("动态壁纸已停止。");});
-  commands.Register("wallpaper.lock-snapshot","wallpaper.lock-snapshot","把主显示器当前画面设为锁屏图片",delegate(CommandArgs a){if(!wallpaper.HasPlayers)return CommandResult.Fail("请先加载壁纸，再同步锁屏快照。");wallpaper.SyncLock();return CommandResult.Success("正在同步锁屏快照。");});
+  commands.Register("wallpaper.lock-snapshot","wallpaper.lock-snapshot","把主显示器当前画面设为锁屏图片",delegate(CommandArgs a){if(!wallpaper.CanSyncLock)return CommandResult.Fail("请先加载壁纸，再同步锁屏快照。");wallpaper.SyncLock();return CommandResult.Success("正在同步锁屏快照。");});
   commands.Register("library.scan","library.scan","重新扫描素材库",delegate(CommandArgs a){Scan();return CommandResult.Success("已扫描 "+items.Count+" 个素材。");});
   commands.Register("library.list","library.list","列出素材库",delegate(CommandArgs a){return CommandResult.Success(items.Count+" 个素材",items.Select(x=>new Dictionary<string,object>{{"title",x.Title},{"type",x.Type},{"file",x.File}}).ToList());});
   commands.Register("rotation.set","rotation.set [on=on|off] [minutes=5|15|30|60|180] [order=sequential|random]","设置轮播",CmdRotation);
   commands.Register("autostart.set","autostart.set on=on|off","开机自动启动",CmdAutostart);
-  commands.Register("system-wallpaper.set","system-wallpaper.set file=<图片> [display=all|1..n]","设为 Windows 系统壁纸（静态档：AWall 不参与渲染）",CmdSystemWallpaper);
+  commands.Register("system-wallpaper.set","system-wallpaper.set file=<图片> [display=all|1..n]","任意位置的图片设为 Windows 系统壁纸（静态档：AWall 不参与渲染；其他显示器的动态壁纸保持不变）",CmdSystemWallpaper);
  }
  // Runs a command from the UI. Handlers report their own progress; failures show in the status line.
  void Run(string name){Run(name,null);}
@@ -42,7 +42,7 @@ public partial class MainWindow {
  object StatusData(){
   var screens=WallpaperService.OrderedScreens();var layout=wallpaper.Layout;var displays=new List<Dictionary<string,object>>();
   for(int i=0;i<screens.Length;i++){Item shown;layout.TryGetValue(screens[i].DeviceName,out shown);
-   displays.Add(new Dictionary<string,object>{{"display",i+1},{"primary",screens[i].Primary},{"title",shown==null?null:shown.Title},{"type",shown==null?null:shown.Type},{"file",shown==null?null:shown.File}});}
+   displays.Add(new Dictionary<string,object>{{"display",i+1},{"primary",screens[i].Primary},{"title",shown==null?null:shown.Title},{"type",shown==null?null:shown.Type},{"file",shown==null?null:shown.File},{"route",shown==null?null:WallpaperService.RouteName(shown)}});}
   return new Dictionary<string,object>{{"paused",wallpaper.Paused},{"loading",wallpaper.Loading},{"displays",displays}};
  }
  // A library item by full path, then by title.
@@ -79,17 +79,16 @@ public partial class MainWindow {
   bool on=a.Flag("on",false);SetAutostart(on);
   return Autostart.Enabled==on?CommandResult.Success(on?"已开启开机自动启动。":"已关闭开机自动启动。"):CommandResult.Fail("设置开机自动启动失败。");
  }
- // Static route of "能静则静": Windows draws the image, AWall renders nothing.
+ // Static route of "能静则静": Windows draws the image, AWall renders nothing. Goes through the same
+ // per-display plan as wallpaper.apply, so other displays keep their live wallpaper.
  CommandResult CmdSystemWallpaper(CommandArgs a){
   string file=a.Get("file");if(String.IsNullOrEmpty(file)||!File.Exists(file))return CommandResult.Fail("图片不存在："+file);
+  if(!Item.IsImageFile(file))return CommandResult.Fail("只支持 "+String.Join(" / ",Item.ImageExtensions)+" 图片："+file);
   string device,error;if(!TryDisplay(a.Get("display"),out device,out error))return CommandResult.Fail(error);
-  bool dynamic=wallpaper.Active;
-  // A live window would cover one display's system image; per-display mixing comes with the desktop runtime.
-  if(device!=null&&dynamic)return CommandResult.Fail("动态壁纸正在播放，单块显示器的系统壁纸会被盖住。请先停止动态壁纸，或用 display=all。");
-  SystemWallpaper.Set(file,device==null?null:Forms.Screen.AllScreens.FirstOrDefault(s=>s.DeviceName==device));
-  if(dynamic)wallpaper.Stop();
-  SetStatus("已设为 Windows 系统壁纸："+Path.GetFileName(file)+"（AWall 不参与渲染）。");
-  return CommandResult.Success("已设为系统壁纸。");
+  string full=Path.GetFullPath(file);
+  var item=items.FirstOrDefault(x=>x.Type=="image"&&String.Equals(x.File,full,StringComparison.OrdinalIgnoreCase))??new Item(){Title=Path.GetFileNameWithoutExtension(full),Type="image",File=full,Preview=full};
+  ApplyItem(item,device);
+  return CommandResult.Success("正在设为系统壁纸："+item.Title);
  }
 }
 }

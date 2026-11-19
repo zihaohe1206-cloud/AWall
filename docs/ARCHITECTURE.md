@@ -24,14 +24,24 @@ AWall 是给 Windows 桌面套上的一层：壁纸和桌面美化是两条产�
 | `Interval` 几分钟变一次（数据生成图、天气、日历） | `SnapshotToSystemWallpaper`：每次更新时离屏渲染成 PNG → 设成系统壁纸 → 立刻释放渲染器 | 只在更新那一下 |
 | `Realtime` 视频 / shader / 动画网页 | `LiveWindow`：WorkerW 下的桌面窗口 + 暂停 / 降帧策略（现有播放器） | 持续占用 |
 
-已实现：`PresentPolicy.Choose` 的判断逻辑，以及静态档的 `system-wallpaper.set` 命令。快照档和按屏混合呈现尚未接通。
+壁纸已接通三档（`WallpaperService.RouteOf`，实现在 `Features/Wallpaper/WallpaperService.Static.cs`）：
+
+| 素材 | 呈现档 | 说明 |
+|---|---|---|
+| 图片（`library/wallpapers/image/`，jpg / jpeg / png / bmp） | `SystemWallpaper` | 文件本身交给 Windows |
+| HTML，`<head>` 里写 `<meta name="awall-present" content="interval=300">` | `SnapshotToSystemWallpaper` | 每 N 秒（≥ 60）离屏渲染一次 |
+| HTML，`content="static"` | `SnapshotToSystemWallpaper` | 只渲染一次 |
+| 其他 HTML、MP4、PKG | `LiveWindow` | 现有播放器 |
 
 规则：
 
 - 只有 `Wallpaper` 层、非交互的块才走系统壁纸；`BelowIcons` / `AboveIcons` 的块总是 `LiveWindow`。
 - 设置系统壁纸会写文件、可能带淡入动画，所以快照档最短间隔是 **60 秒**（`PresentPolicy.MinSnapshotSeconds`），更快的更新自动降为实时档。
-- 当前限制：动态壁纸正在播放时，某一块屏单独设系统壁纸会被动态窗口盖住。按屏混合呈现要等桌面运行时（见[任务页](tasks/desktop.md)路线图第 4 步），在那之前 `system-wallpaper.set` 只允许 `display=all`，或者先停止动态壁纸。
-- 系统壁纸的实现在 `Platform/SystemWallpaper.cs`（按显示器边界匹配 `Forms.Screen`）。
+- **每块屏单独选档**：切换计划里，实时档的屏走原来的播放器流程；静态 / 快照档的屏没有播放器。这些屏同样先盖上旧画面，等图片准备好、所有新播放器就绪后，统一提交：先把图片设成该屏的系统壁纸，关掉该屏的旧播放器，再和实时屏一起淡出遮罩。任何一屏失败都整体回滚，系统壁纸只在提交时才改。
+- **快照**：用一个从不挂到桌面的离屏播放器，按显示器的实际像素大小渲染。首帧到达后等 1 秒让开场动画稳定，截 PNG 存到 `%LOCALAPPDATA%\AWall\snapshots\`（每屏只保留当前一张），然后立刻关闭播放器。暂停、锁屏或桌面被窗口盖满时不刷新。快照在页面没有预览图时兼作素材库预览（同名 `.png`）。
+- 所有屏都是静态档时，不预启动 PKG 待命播放器（AWall 不留任何浏览器进程），下一次切到 PKG 时冷启动。
+- `system-wallpaper.set` 走同一条切换流程，可以只设一块屏，其他屏的动态壁纸不受影响。停止壁纸后系统壁纸保持最后一张。
+- 系统壁纸的实现在 `Platform/SystemWallpaper.cs`（按显示器边界匹配 `Forms.Screen`）。过渡遮罩里的“旧画面”优先读该屏自己的系统壁纸（`StartupBackdrop`）。
 
 ## 3. 内容包格式（`awall.json`，草案）
 
@@ -130,7 +140,9 @@ App ──► UI ──► Features ──► Render / Platform ──► Core
 | `library.scan` / `library.list` | | 重新扫描 / 列出素材 |
 | `rotation.set` | `[on=on\|off] [minutes=5\|15\|30\|60\|180] [order=sequential\|random]` | 轮播设置 |
 | `autostart.set` | `on=on\|off` | 开机自动启动 |
-| `system-wallpaper.set` | `file=<图片> [display=all\|1..n]` | 静态档：设为 Windows 系统壁纸，AWall 不参与渲染 |
+| `system-wallpaper.set` | `file=<图片> [display=all\|1..n]` | 静态档：任意位置的图片设为 Windows 系统壁纸，AWall 不参与渲染；其他屏不变 |
+
+`wallpaper.status` 的每块显示器带 `route`：`live` / `system-wallpaper` / `snapshot`。
 
 ### 对外入口：命令管道与命令行
 
