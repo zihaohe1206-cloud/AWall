@@ -25,7 +25,9 @@
 
 No Steam Workshop artwork, PKG, MP4, or Wallpaper Engine assets are redistributed with AWall. It only reads local materials. Their copyright remains with their respective authors.
 
-## mpv 视频后端（2026-11-16）
+## mpv 视频后端（2026-11-16，2026-11-17 起为可选）
+
+自 2026-11-17 起默认构建不再包含 mpv：MP4 默认由 WebView2 内置播放器播放。只有使用 `build.ps1 -WithMpv` 构建时才会把下述 mpv 文件复制到输出目录。
 
 MP4 使用独立 mpv 子进程，通过 --wid 嵌入 AWall 的桌面窗口，JSON named-pipe IPC 控制。PKG 继续使用 WebView2/WebWallGL。mpv 二进制及两个运行库取自本机 Lively Wallpaper 2.2.1.0 安装包的 Plugins/Mpv；不是运行时依赖 Lively。mpv.exe SHA256：EA97CCD5AB7122EE7084FB04A4D0E74606B344F708FEDBA75B56B22A2D0E4C98。
 

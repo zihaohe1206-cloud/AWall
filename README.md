@@ -1,6 +1,34 @@
-# AWall 0.2 — MP4 / PKG
+# AWall
 
-Windows 动态桌面壁纸与锁屏静态快照原型。不依赖 Wallpaper Engine 运行，不修改原素材。PKG 使用 WebWallGL（MIT）兼容渲染，并按需读取本机引擎共享纹理。
+AWall 是 Windows 动态桌面壁纸工具，支持 MP4、Wallpaper Engine 的 PKG 场景和单文件 HTML 壁纸。可为每块显示器选择壁纸、设置轮播，并把主显示器当前画面设为静态锁屏图片。运行 AWall 前请从托盘退出 Wallpaper Engine，避免两个程序同时渲染桌面。
+
+- [开发与 AI 协作](#开发与-ai-协作)
+- [启动与使用](#启动与使用)
+- [构建与验证](#构建与验证)
+- [项目目录](#项目目录)
+
+## 开发与 AI 协作
+
+**调研和计划默认在对话里交付。需要写文件时，先找现有文档，有同一主题就继续更新。** 开始工作前读本节，查看 `git status --short`，并搜索 `docs/` 和本地 `research/` 中已有的同主题成果。工作区可能包含其他人的未提交改动，修改时要保留这些工作。
+
+| 内容 | 存放位置 | 写法 |
+| --- | --- | --- |
+| 临时调研、计划、排查过程 | 当前对话 | 直接给出结论、依据、实施步骤或待确认事项。 |
+| 临时笔记、下载、实验和参考副本 | `research/` | 需要落盘时放在对应主题目录，例如 `research/notes/<主题>/`。该目录已被 Git 忽略。 |
+| 需要进入版本库的调研、计划或跨会话交接 | `docs/tasks/<topic>.md` | 只有明确要求文件交付、需要后续接手或团队需要审阅时才建。每个任务只维护一份，以小写英文短横线命名，例如 `wallpaper-switch.md`。 |
+| 长期使用说明、架构与技术约定 | README 或 `docs/` 中现有的相关文档 | 更新原位置。确实需要独立的长期文档时，在 `docs/` 新建并从本 README 链接。 |
+| 手动保存的测试日志、截图和复现产物 | `test-artifacts/` | 该目录已被 Git 忽略。任务文档只记必要的复现步骤、验证结果和结论。 |
+
+- 同一任务按需在原文件中记录**目标与状态、调研依据、实施计划、验证和未完成项**。调研、方案、执行记录和验收都可以是同一页里的小节。迭代时直接改这一页，版本历史由 Git 保存。
+- 任务文档中把计划、已实现和已验证的内容标清楚。任务结束后，把仍适用的说明合并到 README 或现有专题文档，再更新原任务页的状态和验证结果。
+- 根目录用于项目入口和仓库级文件，`src/` 用于实现与运行资源，`tools/` 用于工具脚本。调研和计划按上表归位。检查改动时，确认每份新增文档都有独立用途，且同一结论只有一个维护位置。
+- 改代码时以 `build.ps1` 使用的分层源码为准。开发约定和命令表见 [架构文档](docs/ARCHITECTURE.md)；桌面美化尚未实现的设计与路线图见 [桌面美化任务](docs/tasks/desktop.md)。
+
+### 何时移入 `垃圾/`
+
+- 清理时，将已合并或被新版替代的旧稿、重复副本，以及用途已结束的一次性材料移入 `垃圾/`。移动前确认独有信息已有保留位置，并检查是否还有文档、脚本或构建过程依赖原路径。
+- 仍在维护但放错位置的文档按上表归位，并更新引用。已完成的正式任务页可留在 `docs/tasks/`，供后续查阅状态和验证记录。第三方许可、运行资源及脚本的固定输出随各自的组件或流程存放。
+- 归档只移动文件，保留原来的相对路径，例如 `垃圾/2026-11-18-文档整理/bin/commit-msg.txt`。遇到同名归档时使用新的目录。`垃圾/` 是本地恢复区，已被 Git 忽略。
 
 ## Git 提交与推送
 
@@ -8,64 +36,63 @@ Windows 动态桌面壁纸与锁屏静态快照原型。不依赖 Wallpaper Engi
 - **提交信息写清做了什么。** 标题概括实际变更，正文说明主要改动、验证方式和结果。
 - **收到用户对本次任务的明确验收确认后，再推送一次。** 核对目标远程分支和待推送的提交，执行 `git push`，并报告推送结果。
 
-## 启动
+## 启动与使用
 
-双击 `AWall.cmd`，或运行 `bin/AWall.exe`。
+双击 `AWall.cmd`，或运行 `bin/AWall.exe`。桌面快捷方式可直接指向 `bin/AWall.exe`，以显示 AWall 图标。
 
-1. 默认扫描 `E:\Steam\steamapps\workshop\content\431960` 中的 project.json，可通过“选择素材目录”更换目录。
-2. 选择带 MP4 或 PKG 的素材，点击“设为动态桌面”。所有显示器播放同一素材。也可点“导入 MP4 / PKG”选择本地文件。
-3. 画面加载后点击“同步锁屏快照”，从主显示器当前视频或场景生成 JPG，设置为当前用户锁屏图片。
-4. 关闭窗口仅隐藏到托盘，托盘菜单可暂停、打开和退出。成功切换后保存布局，正常退出后再次启动会恢复；“停止壁纸”移除窗口并清除恢复布局。
+1. 点击“导入本地文件”导入 MP4、PKG 或 HTML，或点击“从 Wallpaper Engine 导入”选择工坊里的 MP4 / PKG。工坊导入会按工坊 ID 或文件 SHA-256 标记重复项，并可复制缺少的共享资源。
+2. 选中素材，点击“设为动态桌面”。多屏时在“应用到”中选择全部显示器或指定屏幕。
+3. 画面加载后可点击“同步锁屏快照”，将主显示器当前帧设为静态锁屏图片。Windows 策略可能限制此操作。
 
-使用 AWall 时请先从托盘退出 Wallpaper Engine，避免两个程序同时在桌面层渲染。
+关闭窗口后程序驻留托盘。单击托盘图标或再次启动 AWall 可唤出窗口。托盘菜单支持暂停、继续、下一张、停止和退出。正常退出会保留已应用的布局，下次启动时恢复。“停止壁纸”会清除该布局。
 
-## 功能边界
+在主界面可以开启轮播、设置顺序和间隔、开启登录时启动，或切换浅色、深色和跟随系统。轮播列表为空时使用整个素材库。手动切换会重新计时，暂停、锁屏或被全屏窗口遮挡时会延后轮播。开机启动默认关闭。
 
-- MP4：使用独立 mpv 子进程，静音循环、cover 填充，硬解首选 `auto-safe`；实际是否硬解依赖驱动及编码。通过 playback-restart 检测首帧，启动与首帧总上限为 30 秒。退出优先发送 IPC quit，有限等待后回收自有进程；Job Object在AWall异常终止时兜底回收mpv。
-- 切换壁纸：并行捕获各屏旧画面，先显示独立桌面遮罩并暂停旧播放器，再在离屏窗口初始化新内容；真实首帧就绪后挂载桌面，全部显示器就绪后以 350ms 淡出遮罩。加载失败或 60 秒切换超时恢复旧壁纸；首次播放用系统静态背景遮罩。健康的同素材重复应用跳过重建。
-- 首次遮罩支持系统背景色及常见图片布局；暂不完整还原按显示器分别设置的不同图片或 Spotlight。切换阶段耗时写入 `%LOCALAPPDATA%\AWall\transitions.log`。
-- PKG：WebWallGL 3.0.2 + 本机 WebView2，按需启动，默认 30 FPS。解析真实场景、TEX 纹理、图层、粒子及兼容效果，不以预览图代替。
-- `project.json` 指向不存在的 `scene.json` 而目录中包含 `scene.pkg` 时自动使用包；可扫描松散场景目录。
-- PKG 为兼容渲染，**不保证任意特效、模型和 SceneScript 与官方完全一致**。状态栏显示警告数量，详情记录到逐场景日志。
-- 网页和 application 壁纸仍未支持，目前优先 MP4 / PKG。
-- 尚未接入系统音频频谱、Now Playing、鼠标点击。频谱输入为零，不以模拟数据冒充系统声音；鼠标位置约 20 Hz 推送给场景。
-- 锁屏是静态截图，不是 Win+L 后播放视频。系统策略可能限制锁屏设置；失败会显示错误，不会修改系统策略。
-- 自动暂停：会话锁定、任意显示器被前台全屏窗口覆盖。全屏暂停目前是全局策略。
-- 多屏同源播放，显示器拓扑变化或 TaskbarCreated 通知后重建窗口；周期检查宿主健康。播放后端故障会清理失效批次并报告，允许重新应用。
-- 成功布局保存在 `%LOCALAPPDATA%\AWall\wallpaper-layout.json`，包括素材与暂停设置；正常启动恢复，Stop 清除、Exit 保留。测试使用独立的 `wallpaper-layout-test.json`，不自动恢复正式布局。
-- 不自动启用开机启动、不停止 Wallpaper Engine、不捆绑或上传壁纸素材。
-- MP4 每屏使用独立 mpv，PKG 每屏使用 WebView2；切换素材或停止后释放播放器。尚未做多硬件性能基准。
-- 场景脚本启用以提高兼容性；宿主不暴露本机对象，拦截外网、下载和权限请求。仅播放自己信任的本地素材。
+### 素材与兼容性
 
-## 构建
+本地素材库位于 `library/wallpapers/`，下设 `mp4/`、`pkg/` 和 `html/`。可放置同名 `.jpg`、`.gif` 或 `.png` 作为预览图，PKG 可附带同名 `.json` 保存原 `project.json`。旧版 `library/wallpaper-engine/` 结构可用 `tools/Migrate-Library.ps1` 整理，默认预览，加 `-Apply` 才执行。
 
-Windows PowerShell 中运行：
+- **MP4** 默认使用 WebView2 内置播放器，也可在包含 mpv 的构建中切换播放器。
+- **PKG** 使用 WebWallGL 和 WebView2 兼容渲染，部分特效、模型和 SceneScript 可能与官方引擎有差异。需要 Wallpaper Engine 共享资源时，将其安装目录下的 `assets` 复制到 `library/we-assets/`。
+- **HTML** 使用 WebView2 渲染，默认限制至 30 FPS。支持通过 `awall-properties` 声明可调参数。仅允许从 jsDelivr、unpkg 和 cdnjs 加载指定类型的库文件，首次下载后缓存在 `library/web-cache/`。格式、运行约束和示例见 [AI 网页壁纸生成指南](docs/AI-WALLPAPER-PROMPT.md)。
+- 当前仅支持静态锁屏快照。`application` 类壁纸、系统音频频谱、Now Playing 和鼠标点击尚未接入。全屏自动暂停当前按全局处理。
+
+素材、缓存和共享资源留在本机，`library/` 已被 Git 忽略。请使用自己信任的素材。
+
+## 构建与验证
+
+在项目根目录运行以下命令。构建使用 Windows 自带的 .NET Framework 4.x x64 C# 编译器和 WPF，主要依赖在 `vendor/`。运行需要 WebView2 Runtime。
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-使用系统 .NET Framework 4.x 的 x64 C# 编译器和 WPF。固定版本依赖已置于 `vendor/`，构建无需联网。机器需安装 WebView2 Runtime（本机已有）。许可见 `THIRD-PARTY-NOTICES.md`。
+- 默认输出为 `bin/AWall.exe`。如果它正在运行，可用 `-OutputDirectory bin-next` 生成独立构建。
+- 需要 mpv 时，先将其运行文件放在 `vendor/mpv/`，再加 `-WithMpv` 构建。依赖来源与许可见 [第三方声明](THIRD-PARTY-NOTICES.md)。
+- 修改图标后，可用 `assets/Draw-Icon.ps1` 或 `python assets/draw_icon.py assets` 重新生成图标。
 
-若 `bin/AWall.exe` 正在运行，可加 `-OutputDirectory bin-next` 构建到独立目录。
+退出其他 AWall 实例后，从项目根目录运行所需的自检。自检会实际播放壁纸，结果写入 `%LOCALAPPDATA%\AWall`。
 
+| 命令 | 验证内容 | 结果文件 |
+| --- | --- | --- |
+| `.\bin\AWall.exe --self-test` | 基本播放、截图和短时资源采样 | `selftest.txt`、`test-frame.jpg` |
+| `.\bin\AWall.exe --test-library` | 逐个检查支持的素材，记录画面、帧率和资源占用 | `compatibility/results.json`、`compatibility/perf-summary.txt`、`compatibility/perf-summary.json` |
+| `.\bin\AWall.exe --test-transitions` | 使用素材库中的 MP4 和 PKG 验证切换、失败回滚和布局恢复，各需至少一项 | `transition-test.json` |
 
-## 目录
+`--test-library` 支持 `--perf-seconds=N` 调整每项采样时间。测试 mpv 时可以加 `--video-backend=mpv`，并运行包含 mpv 的构建。首帧和截图可用于定位播放问题，特效还原程度需要对照原场景检查。
 
-- `src/AWall.cs`：UI、素材扫描、离屏播放器窗口、遮罩切换、布局恢复、暂停和快照。
-- `src/DesktopHost.cs`：Lively 机制适配后的桌面宿主发现、健康检查、坐标转换和挂载排序。
-- `src/MpvPlayer.cs`：MP4 子进程、named-pipe IPC、首帧、暂停、截图与进程回收。
-- `src/ScenePlayer.cs`：WebView2 场景宿主、本地映射、共享纹理、诊断、暂停和截图。
-- `src/scene/index.html`：PKG 渲染入口与消息桥接。
-- `src/scene/video.html`：保留的旧视频页面资源，当前 MP4 路径不初始化它。
-- `src/Set-LockImage.ps1`：WinRT 锁屏图片接口；先尝试 UserProfilePersonalizationSettings，拒绝时使用 LockScreen.SetImageFileAsync。
-- `build.ps1`：生成 bin/AWall.exe 并复制锁屏脚本。
-- 数据、日志和锁屏图片：`%LOCALAPPDATA%\AWall`。
-- 自检：`bin\AWall.exe --self-test`。自检会暂时启动视频壁纸，8 秒后保存帧和结果并退出。
-- 全素材自检：退出其他 AWall 实例后运行 `bin\AWall.exe --test-library`，自动遍历视频与 PKG，并在结束后退出。结果在 `%LOCALAPPDATA%\AWall\compatibility\results.json`，包含像素范围、两个时刻的画面是否变化、PKG 暂停状态、运行帧率、警告与截图。首帧成功不代表效果完全还原。
-- 场景诊断：`%LOCALAPPDATA%\AWall\scene-<工坊ID>.log`；WebView2 缓存在 `%LOCALAPPDATA%\AWall\WebView2`。
+## 项目目录
 
-素材版权属于原作者，仅从本机现有下载读取，不包含在源代码中。
+| 路径 | 内容 |
+| --- | --- |
+| `src/App/`、`src/Core/` | 进程入口、路径、命令、素材库、设置和布局模型 |
+| `src/Platform/`、`src/Render/` | Windows 桌面挂载和系统设置、播放器、切换遮罩及 `src/Render/scene/` 页面资源 |
+| `src/Features/`、`src/UI/` | 壁纸参数、桌面美化模型、主窗口、托盘等界面 |
+| `src/Diagnostics/` | 自检和资源采样 |
+| `docs/`、`tools/` | 长期文档、需保留的任务文档、开发工具脚本 |
+| `assets/`、`vendor/` | 项目图标及生成脚本、构建依赖 |
+| `library/`、`research/`、`test-artifacts/` | 本机素材、研究资料、测试产物，均由 Git 忽略 |
 
-正式启动入口：`AWall.cmd` 或 `bin/AWall.exe`。PKG 使用独立 WebView2 环境，当前不做环境预热复用。GitHub 源码不包含本机素材、研究副本及来源尚未完整核实的 mpv 二进制；本机编译需在 `vendor/mpv` 放置所需运行文件，来源见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+`build.ps1` 编译上述 `src/` 分层目录中的 C# 文件，并复制 `src/Render/scene/` 的页面资源。`src/` 顶层还留有重构前的副本，日常开发请修改对应的分层文件。
 
+应用设置、布局和运行日志位于 `%LOCALAPPDATA%\AWall`。切换时序见 `transitions.log`，命令执行见 `commands.log`，场景及网页诊断分别见 `scene-*.log` 和 `web-*.log`。

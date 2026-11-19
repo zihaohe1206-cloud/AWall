@@ -32,7 +32,9 @@ function buildSource(data,id){
    return fetchPkg(signal);
   };
   const original=source.project;
-  source.project=async signal=>({...await original(signal),type:'scene',file:data.pkg});
+  // Typed library: the project lives next to the PKG as <name>.json instead of project.json.
+  const readProject=data.project?async signal=>{const r=await fetch(base+'/'+encodeURIComponent(data.project),{signal});if(!r.ok)throw Error('项目文件读取失败：'+r.status);return JSON.parse((await r.text()).replace(/^\uFEFF/,''));}:original;
+  source.project=async signal=>({...await readProject(signal),type:'scene',file:data.pkg});
  }
  return source;
 }

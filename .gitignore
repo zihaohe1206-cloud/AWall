@@ -3,8 +3,13 @@ bin-*/
 downloads/
 research/
 test-artifacts/
+test-results/
+/垃圾/
 vendor/mpv/*.exe
 vendor/mpv/*.dll
 *.user
 *.suo
 build.log
+
+# Local wallpaper library and shared assets; never commit.
+library/

@@ -9,7 +9,7 @@ const send=(type,value)=>chrome.webview.postMessage({type,value});
 function fail(message){if(failed)return;failed=true;clearTimeout(loadTimer);send('error',message);}
 function play(){if(!paused&&!failed&&video.readyState>=2)video.play().catch(e=>{if(e.name!=='AbortError')fail('无法启动视频：'+e.message);});}
 window.awallPause=value=>{paused=value;if(value)video.pause();else play();};
-window.awallStats=()=>({paused,time:video.currentTime,width:video.videoWidth,height:video.videoHeight,readyState:video.readyState,ended:video.ended,duration:video.duration,loop:video.loop,mediaPaused:video.paused});
+window.awallStats=()=>({backend:'webview2',paused,time:video.currentTime,width:video.videoWidth,height:video.videoHeight,readyState:video.readyState,ended:video.ended,duration:video.duration,loop:video.loop,mediaPaused:video.paused});
 video.addEventListener('error',()=>{const code=video.error&&video.error.code;fail('视频解码失败（代码 '+code+'）：'+(video.error&&video.error.message||'请检查文件是否损坏或编码是否受支持。'));});
 video.addEventListener('loadeddata',()=>{
   // Decoded data alone is not a presented frame. Allow the compositor a paint

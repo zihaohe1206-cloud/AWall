@@ -16,6 +16,13 @@ public sealed class ScenePlayer : IDisposable {
  // The property alone is applied too late for the browser's earliest surface.
  static ScenePlayer(){Environment.SetEnvironmentVariable("WEBVIEW2_DEFAULT_BACKGROUND_COLOR","FF000000",EnvironmentVariableTarget.Process);}
  static readonly HashSet<string> activeProfiles=new HashSet<string>();
+ // MP4 backend. "builtin" plays through WebView2 (scene/video.html, Chromium hardware decoding,
+ // nothing extra to ship). "mpv" uses the optional mpv\mpv.exe next to AWall.exe (build.ps1 -WithMpv).
+ // Chosen per player when it is created; a missing mpv falls back to builtin.
+ public static string VideoBackend="builtin";
+ public static string MpvPath {get {return Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"mpv","mpv.exe");}}
+ public static bool MpvAvailable {get {return File.Exists(MpvPath);}}
+ public readonly bool UsesMpv;
  // Set this before creating the native controller, including its initial about:blank.
  public readonly WebView2 View = new WebView2(){DefaultBackgroundColor=System.Drawing.Color.Black};
  public bool Ready; public bool Failed; public int Warnings; public string LastError="";
@@ -23,6 +30,8 @@ public sealed class ScenePlayer : IDisposable {
  bool disposed,pointerBusy,pauseBusy; bool? paused,appliedPause; string log,profile; Item item; readonly HashSet<string> warnings=new HashSet<string>();
  readonly TaskCompletionSource<bool> closed=new TaskCompletionSource<bool>();
  bool IsVideo {get {return item!=null&&item.Type=="video";}}
+ // AI-generated / hand-written single-file HTML wallpaper (library\wallpapers\html\<name>.html).
+ bool IsWeb {get {return item!=null&&item.Type=="web";}}
  // A standby player is created without an item: it starts the browser process,
  // loads index.html and the engine script, then waits at "boot" until Assign().
  public bool Standby {get {return item==null;}}
@@ -32,7 +41,7 @@ public sealed class ScenePlayer : IDisposable {
  // instance is destroyed. No new browser process, page load or cover capture.
  string mediaHost=MediaHost; int swapId; Item swapItem; string swapHost; CoreWebView2SharedBuffer swapBuffer;
  TaskCompletionSource<bool> swapTcs; public string LastSwapError="";
- public bool CanSwap {get {return !disposed&&Ready&&!Failed&&item!=null&&!IsVideo&&bootCore!=null&&swapTcs==null;}}
+ public bool CanSwap {get {return !disposed&&Ready&&!Failed&&item!=null&&!IsVideo&&!IsWeb&&bootCore!=null&&swapTcs==null;}}
  void WriteTo(Item target,string line){try{File.AppendAllText(LogPath(target),DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss.fff")+" "+line+Environment.NewLine);}catch{}}
  void EndSwap(TaskCompletionSource<bool> tcs,bool ok,string error){
   if(tcs==null||swapTcs!=tcs)return;
@@ -56,7 +65,7 @@ public sealed class ScenePlayer : IDisposable {
       core.PostSharedBufferToScript(buffer,CoreWebView2SharedBufferAccess.ReadWrite,"{\"type\":\"pkg\",\"id\":"+id+"}");swapBuffer=buffer;buffered=true;}
     }catch(Exception ex){WriteTo(next,"PKGBUFFER fallback "+ex.Message);}}
    if(disposed||swapTcs!=tcs)return false;
-   core.PostWebMessageAsJson(new JavaScriptSerializer().Serialize(new{type="swap",id=id,pkg=pkg?Path.GetFileName(next.File):null,buffered=buffered,mediaBase="https://"+host}));
+   core.PostWebMessageAsJson(new JavaScriptSerializer().Serialize(new{type="swap",id=id,pkg=pkg?Path.GetFileName(next.File):null,project=pkg?ProjectName(next.File):null,buffered=buffered,mediaBase="https://"+host}));
   }catch(Exception ex){EndSwap(tcs,false,ex.Message);return false;}
   if(await Task.WhenAny(tcs.Task,Task.Delay(60000))!=tcs.Task)EndSwap(tcs,false,"同页切换超时");
   return tcs.Task.IsCompleted&&tcs.Task.Result;
@@ -74,9 +83,11 @@ public sealed class ScenePlayer : IDisposable {
   Write("SWAPPED id="+id+" "+ReadyInfo);
   swapBuffer=null;swapHost=null;swapItem=null;swapTcs=null;tcs.TrySetResult(true);
  }
- string Kind {get {return IsVideo?"MP4":"PKG";}}
+ string Kind {get {return IsVideo?"MP4":IsWeb?"网页":"PKG";}}
  const string AppHost="awall.local", MediaHost="wallpaper.awall.local";
- const string Assets="E:\\Steam\\steamapps\\common\\wallpaper_engine\\assets";
+ // Shared Wallpaper Engine assets, copied locally into <project>\library\we-assets (git-ignored).
+ // The exe runs from <project>\\bin (or bin-next), so the project root is its parent folder.
+ static readonly string Assets=Path.GetFullPath(Path.Combine(Path.GetDirectoryName(AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\','/')),"library","we-assets"));
  // Shared Wallpaper Engine assets are immutable for the life of the process.
  // Enumerating materials\*.tex recursively and reading TEX files used to run
  // synchronously on the UI thread for every player and every switch, which
@@ -122,7 +133,8 @@ public sealed class ScenePlayer : IDisposable {
  bool IsPkg {get {return item!=null&&!IsVideo&&Path.GetExtension(item.File).Equals(".pkg",StringComparison.OrdinalIgnoreCase);}}
  public ScenePlayer(Item value,string display) {
   item=value;
-  if(!IsVideo){MaterialIndex();if(IsPkg)pkgWarm=WarmPkg(item.File);}
+  UsesMpv=IsVideo&&VideoBackend=="mpv"&&MpvAvailable;
+  if(!IsVideo&&!IsWeb){MaterialIndex();if(IsPkg)pkgWarm=WarmPkg(item.File);}
   string key=new string(display.Select(c=>Path.GetInvalidFileNameChars().Contains(c)?'_':c).ToArray());
   int slot=0;
   // Adjacent wallpapers must not share a browser process: pausing the old
@@ -133,7 +145,11 @@ public sealed class ScenePlayer : IDisposable {
   activeProfiles.Add(profile);
   log=LogPath(value);
  }
- static string LogPath(Item value){return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AWall",value==null?"scene-standby.log":(value.Type=="video"?"video-":"scene-")+Path.GetFileName(Path.GetDirectoryName(value.File))+".log");}
+ static string LogPath(Item value){return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AWall",value==null?"scene-standby.log":(value.Type=="video"?"video-":value.Type=="web"?"web-":"scene-")+LogName(value.File)+".log");}
+ // Typed library files sit directly in pkg\ or mp4\, so name logs by file; old per-folder items keep the folder (workshop id).
+ static string LogName(string file){string dir=Path.GetFileName(Path.GetDirectoryName(file));return dir.Equals("pkg",StringComparison.OrdinalIgnoreCase)||dir.Equals("mp4",StringComparison.OrdinalIgnoreCase)||dir.Equals("html",StringComparison.OrdinalIgnoreCase)?Path.GetFileNameWithoutExtension(file):dir;}
+ // A typed-library PKG carries its project as <name>.json next to it; null means the folder's project.json.
+ static string ProjectName(string file){var json=Path.ChangeExtension(file,".json");return File.Exists(json)?Path.GetFileName(json):null;}
  void MapMedia(){if(mediaMapped||item==null||disposed||View.CoreWebView2==null)return;View.CoreWebView2.SetVirtualHostNameToFolderMapping(MediaHost,Path.GetDirectoryName(item.File),CoreWebView2HostResourceAccessKind.Allow);mediaMapped=true;}
  public void Assign(Item value){
   if(disposed)throw new ObjectDisposedException("ScenePlayer");
@@ -161,6 +177,10 @@ public sealed class ScenePlayer : IDisposable {
     Deferred(e,ReadAsset(path),"application/octet-stream");return;
    }
    if(uri.Scheme=="data"||uri.Scheme=="blob"||uri.Scheme=="about")return;
+   // The one network exception: library files from allowlisted CDNs, downloaded once and cached.
+   if(IsWeb&&WebCdn.Allowed(uri)&&e.Request.Method=="GET"){Cdn(e,uri);return;}
+   // HTML wallpapers run offline: external CDNs, fonts and APIs are refused and reported once per host.
+   if(IsWeb)Warn("已拦截外部资源 "+uri.Host+"（只放行 jsdelivr / unpkg / cdnjs 的库文件）");
    Response(e,new byte[0],"text/plain",403);
   }catch{Response(e,new byte[0],"text/plain",404);}
  }
@@ -177,9 +197,24 @@ public sealed class ScenePlayer : IDisposable {
   }catch{}
   finally{deferral.Complete();}
  }
+ async void Cdn(CoreWebView2WebResourceRequestedEventArgs e,Uri uri){
+  var deferral=e.GetDeferral();
+  try{
+   var entry=await WebCdn.Get(uri);
+   if(disposed||View.CoreWebView2==null)return;
+   var env=View.CoreWebView2.Environment;
+   string path=uri.AbsolutePath.Length>80?uri.AbsolutePath.Substring(0,77)+"...":uri.AbsolutePath;
+   if(entry.Error!=null){Warn("CDN 资源不可用 "+uri.Host+path+"："+entry.Error);e.Response=env.CreateWebResourceResponse(new MemoryStream(),404,"Not Found","Access-Control-Allow-Origin: *");return;}
+   if(entry.Location!=null){Write("CDN redirect "+uri.AbsoluteUri+" -> "+entry.Location);e.Response=env.CreateWebResourceResponse(new MemoryStream(),302,"Found","Location: "+entry.Location+"\r\nAccess-Control-Allow-Origin: *");return;}
+   if(entry.Downloaded)Write("CDN downloaded "+uri.AbsoluteUri+" "+entry.Body.Length+" bytes");
+   // Module scripts load cross-origin from the wallpaper's host, so CORS must allow it.
+   e.Response=env.CreateWebResourceResponse(new MemoryStream(entry.Body),200,"OK","Content-Type: "+entry.Mime+"\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: max-age=31536000, immutable");
+  }catch(Exception ex){Write("CDN "+uri.AbsoluteUri+" "+ex.Message);}
+  finally{deferral.Complete();}
+ }
  MpvPlayer mpv;
  public async Task Initialize(IntPtr host){
-  if(IsVideo){mpv=new MpvPlayer(item.File,host);mpv.Report=delegate(string error){if(disposed)return;if(error!=null){Fail(error);return;}Ready=true;if(paused.HasValue)Pause(paused.Value);if(Report!=null)Report("MP4 / mpv 首帧已就绪。");};await mpv.Initialize();return;}
+  if(IsVideo&&UsesMpv){mpv=new MpvPlayer(item.File,host);mpv.Report=delegate(string error){if(disposed)return;if(error!=null){Fail(error);return;}Ready=true;if(paused.HasValue)Pause(paused.Value);if(Report!=null)Report("MP4 / mpv 首帧已就绪。");};await mpv.Initialize();return;}
   try{
    // A replacement renders beneath the old wallpaper until its first frame.
    // Native occlusion tracking would otherwise throttle that staging renderer.
@@ -199,23 +234,37 @@ public sealed class ScenePlayer : IDisposable {
    core.PermissionRequested+=delegate(object sender,CoreWebView2PermissionRequestedEventArgs e){e.State=CoreWebView2PermissionState.Deny;};
    core.NewWindowRequested+=delegate(object sender,CoreWebView2NewWindowRequestedEventArgs e){e.Handled=true;};
    core.DownloadStarting+=delegate(object sender,CoreWebView2DownloadStartingEventArgs e){e.Cancel=true;};
-   core.NavigationStarting+=delegate(object sender,CoreWebView2NavigationStartingEventArgs e){if(!e.Uri.StartsWith("https://awall.local/",StringComparison.OrdinalIgnoreCase))e.Cancel=true;};
+   core.NavigationStarting+=delegate(object sender,CoreWebView2NavigationStartingEventArgs e){if(!e.Uri.StartsWith("https://awall.local/",StringComparison.OrdinalIgnoreCase)&&!(IsWeb&&e.Uri.StartsWith("https://"+MediaHost+"/",StringComparison.OrdinalIgnoreCase)))e.Cancel=true;};
    core.ProcessFailed+=delegate(object sender,CoreWebView2ProcessFailedEventArgs e){Fail("WebView2: "+e.ProcessFailedKind);};
    core.WebMessageReceived+=delegate(object sender,CoreWebView2WebMessageReceivedEventArgs e){
     if(disposed)return;
-    if(!e.Source.StartsWith("https://awall.local/",StringComparison.OrdinalIgnoreCase))return;
+    if(!e.Source.StartsWith("https://awall.local/",StringComparison.OrdinalIgnoreCase)&&!(IsWeb&&e.Source.StartsWith("https://"+MediaHost+"/",StringComparison.OrdinalIgnoreCase)))return;
     try{
      var msg=new JavaScriptSerializer(){MaxJsonLength=4*1024*1024}.Deserialize<Dictionary<string,object>>(e.WebMessageAsJson);
      string type=Convert.ToString(msg["type"]);object val=msg.ContainsKey("value")?msg["value"]:null;
+     if(IsWeb&&type!="ready"&&type!="diagnostic")return;
      if(type=="boot"){if(booted)return;booted=true;bootCore=core;Write("BOOT"+(item==null?" standby":""));if(item!=null)SendLoad(core);}
-     else if(type=="ready"){if(Ready||Failed)return;Ready=true;ReadyInfo=new JavaScriptSerializer().Serialize(val);if(paused.HasValue)Pause(paused.Value);Write("READY "+ReadyInfo);if(Report!=null)Report(IsVideo?"MP4 首帧已就绪。":"PKG 首帧已就绪；诊断警告 "+Warnings+" 条。");}
+     else if(type=="ready"){if(Ready||Failed)return;Ready=true;ReadyInfo=new JavaScriptSerializer().Serialize(val);if(paused.HasValue)Pause(paused.Value);if(IsWeb&&pendingProps.Count>0){var first=pendingProps.First();SetProperty(first.Key,first.Value);}Write("READY "+ReadyInfo);if(Report!=null)Report(IsVideo?"MP4 首帧已就绪（内置播放器）。":Kind+" 首帧已就绪；诊断警告 "+Warnings+" 条。");}
      else if(type=="swapped"||type=="swap-error")SwapMessage(type,val);
      else if(type=="error")Fail(Convert.ToString(val));
      else if(type=="diagnostic"&&swapItem!=null&&(val as Dictionary<string,object>)!=null&&(val as Dictionary<string,object>).ContainsKey("swap")){var sd=(Dictionary<string,object>)val;WriteTo(swapItem,Convert.ToString(sd["level"])+" "+Convert.ToString(sd["message"]));}
-     else if(type=="diagnostic"){var d=val as Dictionary<string,object>;string level=Convert.ToString(d["level"]);string message=Convert.ToString(d["message"]);if(level=="warn"){if(!warnings.Add(message))return;Warnings=warnings.Count;if(Report!=null)Report("PKG 兼容性警告 "+Warnings+" 条："+message);}Write(level+" "+message);}
+     else if(type=="diagnostic"){var d=val as Dictionary<string,object>;string level=Convert.ToString(d["level"]);string message=Convert.ToString(d["message"]);if(level=="warn"){if(!warnings.Add(message))return;Warnings=warnings.Count;if(Report!=null)Report(Kind+" 兼容性警告 "+Warnings+" 条："+message);}Write(level+" "+message);}
     }catch(Exception ex){Write("MESSAGE "+ex.Message);}
    };
-   core.NavigationCompleted+=delegate(object sender,CoreWebView2NavigationCompletedEventArgs e){Write("NAV completed ok="+e.IsSuccess);};
+   core.NavigationCompleted+=delegate(object sender,CoreWebView2NavigationCompletedEventArgs e){Write("NAV completed ok="+e.IsSuccess+" status="+e.WebErrorStatus);if(IsWeb&&!e.IsSuccess&&!Ready)Fail("网页加载失败："+e.WebErrorStatus);
+    // A page without a parameter listener reloads on change; re-apply the pause state to the fresh document.
+    if(IsWeb&&e.IsSuccess&&Ready&&paused.HasValue){appliedPause=null;Pause(paused.Value);}};
+   if(IsWeb){
+    // The shim must be registered before navigation so it runs ahead of page scripts.
+    string shim=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"scene","web-shim.js");
+    if(!File.Exists(shim))throw new FileNotFoundException("缺少 scene\\web-shim.js，请重新构建。",shim);
+    // Current parameter values (defaults + saved) are visible to page scripts from the first line.
+    await core.AddScriptToExecuteOnDocumentCreatedAsync("window.__awallProps="+WebProperties.Json(WebProperties.Values(item))+";");if(disposed)return;
+    await core.AddScriptToExecuteOnDocumentCreatedAsync(File.ReadAllText(shim,Encoding.UTF8));if(disposed)return;
+    Write("WEB navigate "+item.File);
+    core.Navigate("https://"+MediaHost+"/"+Uri.EscapeDataString(Path.GetFileName(item.File)));
+    return;
+   }
    core.Navigate(IsVideo?"https://awall.local/video.html":"https://awall.local/index.html?localAssets=1");
   }catch(Exception ex){Write("INIT EXCEPTION "+ex.ToString());Fail(ex.Message);}
  }
@@ -228,7 +277,7 @@ public sealed class ScenePlayer : IDisposable {
   bool buffered=false;
   if(IsPkg){try{buffered=await PostPkgBuffer(core);}catch(Exception ex){Write("PKGBUFFER fallback "+ex.Message);}}
   if(disposed)return;
-  try{core.PostWebMessageAsJson(new JavaScriptSerializer().Serialize(new{type="load",video=IsVideo?Path.GetFileName(item.File):null,pkg=IsPkg?Path.GetFileName(item.File):null,buffered=buffered}));}
+  try{core.PostWebMessageAsJson(new JavaScriptSerializer().Serialize(new{type="load",video=IsVideo?Path.GetFileName(item.File):null,pkg=IsPkg?Path.GetFileName(item.File):null,project=IsPkg?ProjectName(item.File):null,buffered=buffered}));}
   catch(Exception ex){Write("LOAD "+ex.Message);}
  }
  async Task<bool> PostPkgBuffer(CoreWebView2 core){
@@ -263,12 +312,22 @@ public sealed class ScenePlayer : IDisposable {
    var result=buffer;buffer=null;return result;
   }finally{if(buffer!=null)try{buffer.Dispose();}catch{}}
  }
+ void Warn(string message){if(disposed||!warnings.Add(message))return;Warnings=warnings.Count;Write("warn "+message);if(Report!=null)Report(Kind+" 警告 "+Warnings+" 条："+message);}
  void Fail(string message){if(disposed)return;Failed=true;Ready=false;LastError=message;Write("ERROR "+message);if(Report!=null)Report(Kind+" 加载失败："+message);}
  public async void Pause(bool value){
   paused=value;if(mpv!=null){mpv.Pause(value);return;}if(disposed||!Ready||View.CoreWebView2==null||pauseBusy)return;
   pauseBusy=true;
   try{while(!disposed&&Ready&&appliedPause!=paused){bool desired=paused.Value;await View.CoreWebView2.ExecuteScriptAsync("window.awallPause && window.awallPause("+(desired?"true":"false")+")");appliedPause=desired;}}
   catch(Exception ex){Write("PAUSE "+ex.Message);}finally{pauseBusy=false;}
+ }
+ // Live parameter change from the properties window. Rapid slider moves are coalesced:
+ // only the latest value of each property is sent while a script call is in flight.
+ readonly Dictionary<string,object> pendingProps=new Dictionary<string,object>(); bool propsBusy;
+ public async void SetProperty(string name,object value){
+  if(!IsWeb||disposed)return;pendingProps[name]=value;if(propsBusy||!Ready||View.CoreWebView2==null)return;
+  propsBusy=true;
+  try{while(pendingProps.Count>0&&!disposed&&View.CoreWebView2!=null){var batch=new Dictionary<string,object>(pendingProps);pendingProps.Clear();await View.CoreWebView2.ExecuteScriptAsync("window.awallProperties && window.awallProperties("+WebProperties.Json(batch)+")");}}
+  catch(Exception ex){Write("PROPERTY "+ex.Message);}finally{propsBusy=false;}
  }
  public async void Pointer(double u,double v){if(IsVideo||!Ready||disposed||paused==true||pointerBusy)return;pointerBusy=true;try{await View.CoreWebView2.ExecuteScriptAsync("window.awallPointer("+u.ToString(System.Globalization.CultureInfo.InvariantCulture)+","+v.ToString(System.Globalization.CultureInfo.InvariantCulture)+")");}catch{}finally{pointerBusy=false;}}
  public async Task<string> Snapshot(string path){if(mpv!=null)return await mpv.Snapshot(path);if(!Ready)throw new InvalidOperationException(Kind+" 尚未显示首帧。");using(var file=File.Create(path))await View.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Jpeg,file);return path;}
@@ -287,7 +346,7 @@ public sealed class ScenePlayer : IDisposable {
    stream.Position=0;var image=new BitmapImage();image.BeginInit();image.CacheOption=BitmapCacheOption.OnLoad;image.StreamSource=stream;image.EndInit();image.Freeze();return image;
   }
  }
- public async Task SeekNearEnd(){if(mpv!=null){await mpv.SeekNearEnd();return;}await View.CoreWebView2.ExecuteScriptAsync("video.currentTime=Math.max(0,video.duration-0.2)");}
+ public async Task SeekNearEnd(){if(mpv!=null){await mpv.SeekNearEnd();return;}if(IsWeb)return;await View.CoreWebView2.ExecuteScriptAsync("video.currentTime=Math.max(0,video.duration-0.2)");}
  public async Task<string> Stats(){if(mpv!=null)return await mpv.Stats();return View.CoreWebView2==null?"null":await View.CoreWebView2.ExecuteScriptAsync("window.awallStats && window.awallStats()");}
 
  public void Dispose(){if(disposed)return;disposed=true;Ready=false;Report=null;closed.TrySetResult(true);if(swapTcs!=null){var t=swapTcs;swapTcs=null;t.TrySetResult(false);}try{if(mpv!=null)mpv.Dispose();View.Dispose();if(pkgBuffer!=null)try{pkgBuffer.Dispose();}catch{}if(swapBuffer!=null)try{swapBuffer.Dispose();}catch{}}finally{activeProfiles.Remove(profile);}}
