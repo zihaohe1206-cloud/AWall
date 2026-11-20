@@ -111,5 +111,15 @@ public partial class WallpaperService {
   }
   if(version==transitionVersion)ready();
  }
+ // An image of what a display shows now, for colour picking (fence palettes): the static image, a frame of
+ // the live player, the item preview, or the Windows wallpaper. Null when nothing is known.
+ public async Task<string> ThemeImageAsync(Forms.Screen screen,string framePath){
+  StaticDisplay s;if(statics.TryGetValue(screen.DeviceName,out s)&&File.Exists(s.Image))return s.Image;
+  var p=players.FirstOrDefault(x=>x.Monitor!=null&&x.Monitor.DeviceName==screen.DeviceName&&!x.IsClosed&&x.Ready);
+  if(p!=null){try{await p.Snapshot(framePath);if(File.Exists(framePath))return framePath;}catch{}}
+  Item item;if(layout.TryGetValue(screen.DeviceName,out item)&&item!=null&&!String.IsNullOrEmpty(item.Preview)&&File.Exists(item.Preview))return item.Preview;
+  try{var system=SystemWallpaper.Get(screen);if(!String.IsNullOrEmpty(system)&&File.Exists(system))return system;}catch{}
+  return null;
+ }
 }
 }

@@ -95,6 +95,54 @@ public partial class MainWindow {
    result["perfTakeover"]=await PerfProbe.Measure(3);
    svc.Remove(img.Id);await Task.Delay(300);
    step("takeover.off",svc.Store.Other==null&&svc.View(other.Id)==null&&DesktopIcons.Visible==iconsBefore&&!DesktopIcons.HiddenByAWall,new{icons=DesktopIcons.Visible});
+
+   // ---- 5.3: double-click timing.
+   var d=new DoubleClickDetector(500,4,4);
+   bool dbl=!d.Click(100,100,1000)&&d.Click(101,101,1300);
+   bool slow=!d.Click(100,100,5000)&&!d.Click(100,100,5600);
+   var d2=new DoubleClickDetector(500,4,4);bool far=!d2.Click(100,100,1000)&&!d2.Click(140,100,1100);
+   var d3=new DoubleClickDetector(500,4,4);bool triple=!d3.Click(0,0,0)&&d3.Click(0,0,100)&&!d3.Click(0,0,200);
+   step("doubleclick.timing",dbl&&slow&&far&&triple,new{dbl=dbl,slow=slow,far=far,triple=triple});
+   step("doubleclick.hook-running",svc.DoubleClickRunning,null);
+   var fb=v.Window.Bounds;
+   step("doubleclick.fence-is-not-empty-desktop",!DesktopHit.IsEmptyDesktop(new System.Drawing.Point(fb.Left+fb.Width/2,fb.Top+fb.Height/2)),null);
+   svc.SetDoubleClickHide(false);bool off=!svc.DoubleClickRunning;svc.SetDoubleClickHide(true);
+   step("doubleclick.toggle-hook",off&&svc.DoubleClickRunning,null);
+
+   // ---- 5.3: clean desktop.
+   bool iconsNow=DesktopIcons.Visible;
+   svc.SetClean(true);await Task.Delay(300);
+   bool hiddenAll=!v.Window.IsVisible&&(!iconsNow||!DesktopIcons.Visible);
+   svc.Refresh();await Task.Delay(200);bool staysHidden=!v.Window.IsVisible;
+   svc.SetClean(false);await Task.Delay(400);
+   step("clean.hide-and-restore",hiddenAll&&staysHidden&&v.Window.IsVisible&&DesktopIcons.Visible==iconsNow&&DesktopHost.IsAboveIcons(v.Window.Handle),new{hiddenAll=hiddenAll,staysHidden=staysHidden,icons=DesktopIcons.Visible});
+
+   // ---- 5.3: palette from wallpaper colours.
+   Func<System.Drawing.Color,System.Drawing.Color,FencePalette> paletteOf=delegate(System.Drawing.Color a,System.Drawing.Color c){
+    string file=Path.Combine(data,"palette-test.png");
+    using(var bmp=new System.Drawing.Bitmap(160,90))using(var g=System.Drawing.Graphics.FromImage(bmp)){g.Clear(a);using(var brush=new System.Drawing.SolidBrush(c))g.FillRectangle(brush,0,0,60,90);bmp.Save(file);}
+    try{return WallpaperPalette.FromImage(file);}finally{File.Delete(file);}
+   };
+   Func<System.Windows.Media.Color,double> hue=delegate(System.Windows.Media.Color c){double h,s,l;WallpaperPalette.ToHsl(c,out h,out s,out l);return h;};
+   Func<System.Windows.Media.Color,double> light=delegate(System.Windows.Media.Color c){double h,s,l;WallpaperPalette.ToHsl(c,out h,out s,out l);return l;};
+   var blue=paletteOf(System.Drawing.Color.FromArgb(20,30,60),System.Drawing.Color.FromArgb(40,110,240));
+   var orange=paletteOf(System.Drawing.Color.FromArgb(240,230,220),System.Drawing.Color.FromArgb(240,130,20));
+   var grey=paletteOf(System.Drawing.Color.FromArgb(128,128,128),System.Drawing.Color.FromArgb(90,90,90));
+   bool blueOk=Math.Abs(hue(blue.Selected)-218)<20&&light(blue.Back)<0.16;
+   bool orangeOk=Math.Abs(hue(orange.Selected)-28)<20&&light(orange.Back)<0.16;// bright wallpaper, card stays dark
+   double gh,gs,gl;WallpaperPalette.ToHsl(grey.Back,out gh,out gs,out gl);
+   step("palette.from-colours",blueOk&&orangeOk&&gs<0.05&&WallpaperPalette.FromImage(null)==FencePalette.Default,new{blue=blue.Selected.ToString(),orange=orange.Selected.ToString(),greyBack=grey.Back.ToString()});
+   svc.SetPalette(v.Config.Display,orange,false);await Task.Delay(300);
+   var pt=new[]{new System.Drawing.Point(fb.Right-(int)(30*svc.Scale),fb.Bottom-(int)(14*svc.Scale))};
+   var c1=DesktopPixels(pt)[0];
+   step("palette.applied",Near(c1,orange.Back.R,orange.Back.G,orange.Back.B),new{pixel=Hex(c1),expected=orange.Back.ToString()});
+   svc.SetPalette(v.Config.Display,blue,true);await Task.Delay(200);var mid=DesktopPixels(pt)[0];await Task.Delay(900);var c2=DesktopPixels(pt)[0];
+   step("palette.animated-transition",Near(c2,blue.Back.R,blue.Back.G,blue.Back.B),new{during=Hex(mid),after=Hex(c2),expected=blue.Back.ToString()});
+   var sysImage=await wallpaper.ThemeImageAsync(Forms.Screen.PrimaryScreen,Path.Combine(data,"theme-test.jpg"));
+   var sysPalette=WallpaperPalette.FromImage(sysImage);
+   step("palette.from-current-wallpaper",sysImage!=null&&sysPalette!=FencePalette.Default,new{image=sysImage,back=sysPalette.Back.ToString(),selected=sysPalette.Selected.ToString()});
+   try{File.Delete(Path.Combine(data,"theme-test.jpg"));}catch{}
+
    step("folder.untouched",Directory.GetFileSystemEntries(folder).Length==3,Directory.GetFileSystemEntries(folder).Length);
   }catch(Exception e){ok=false;result["error"]=e.ToString();}
   finally{

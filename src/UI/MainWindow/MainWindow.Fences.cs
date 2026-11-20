@@ -13,7 +13,28 @@ public partial class MainWindow {
  void StartFences(){
   fences.Status+=SetStatus;
   wallpaper.DisplaysChanged+=delegate{fences.DisplaysChanged();};
+  // Fence colours follow each display's wallpaper: re-pick shortly after a switch (the new frame is up)
+  // and when a fence appears on a display that has no palette yet.
+  themeTimer.Tick+=delegate{themeTimer.Stop();UpdateFenceTheme(true);};
+  wallpaper.Changed+=delegate{if(!wallpaper.Loading)ScheduleFenceTheme();};
+  fences.Changed+=delegate{if(fences.FenceDisplays.Any(d=>!fences.HasPalette(d)))ScheduleFenceTheme();};
   try{fences.Start(Path.Combine(AppPaths.Data,"fences.json"));}catch(Exception e){SetStatus("桌面分区启动失败："+e.Message);}
+ }
+ readonly System.Windows.Threading.DispatcherTimer themeTimer=new System.Windows.Threading.DispatcherTimer(){Interval=TimeSpan.FromMilliseconds(900)};
+ bool themeBusy;
+ void ScheduleFenceTheme(){if(fences.Store==null||fences.Views.Count==0)return;themeTimer.Stop();themeTimer.Start();}
+ internal async System.Threading.Tasks.Task UpdateFenceTheme(bool animate){
+  if(themeBusy){ScheduleFenceTheme();return;}themeBusy=true;
+  try{
+   foreach(var display in fences.FenceDisplays){
+    var screen=Forms.Screen.AllScreens.FirstOrDefault(s=>s.DeviceName==display);if(screen==null)continue;
+    string frame=Path.Combine(AppPaths.Data,"theme-"+display.Trim('\\','.')+".jpg");
+    string image=await wallpaper.ThemeImageAsync(screen,frame);
+    var palette=await System.Threading.Tasks.Task.Run(delegate{return WallpaperPalette.FromImage(image);});
+    fences.SetPalette(display,palette,animate&&fences.HasPalette(display));
+   }
+  }catch(Exception e){SetStatus("分区取色失败："+e.Message);}
+  finally{themeBusy=false;}
  }
  void RegisterFenceCommands(){
   commands.Register("fence.list","fence.list","列出桌面分区",delegate(CommandArgs a){
@@ -36,6 +57,19 @@ public partial class MainWindow {
    if(!a.IsFlag("on"))return CommandResult.Fail("on 应为 on 或 off。");
    fences.SetUnlocked(!a.Flag("on",true));return CommandResult.Success(fences.Store.Unlocked?"分区布局已解锁。":"分区布局已锁定。");
   });
+  commands.Register("desktop.clean","desktop.clean [on=on|off]","干净桌面：隐藏 / 恢复桌面图标和所有分区（不带参数时切换，等同双击桌面空白处）",delegate(CommandArgs a){
+   if(fences.Store==null)return CommandResult.Fail("桌面分区尚未启动。");
+   if(a.Has("on")&&!a.IsFlag("on"))return CommandResult.Fail("on 应为 on 或 off。");
+   fences.SetClean(a.Has("on")?a.Flag("on",true):!fences.Clean);
+   return CommandResult.Success(fences.Clean?"已隐藏桌面图标和分区。":"已恢复桌面图标和分区。",new Dictionary<string,object>{{"clean",fences.Clean}});
+  });
+  commands.Register("desktop.double-click","desktop.double-click on=on|off","双击桌面空白处隐藏 / 恢复图标和分区（默认开启）",delegate(CommandArgs a){
+   if(fences.Store==null)return CommandResult.Fail("桌面分区尚未启动。");
+   if(!a.IsFlag("on"))return CommandResult.Fail("on 应为 on 或 off。");
+   fences.SetDoubleClickHide(a.Flag("on",true));
+   return CommandResult.Success(fences.Store.DoubleClickHide?(fences.DoubleClickRunning?"已开启双击桌面空白处隐藏。":"已开启，但鼠标钩子没有装上，见状态栏。"):"已关闭双击隐藏。");
+  });
+  commands.Register("fence.theme","fence.theme","按当前壁纸重新给分区取色",delegate(CommandArgs a){var t=UpdateFenceTheme(true);return CommandResult.Success("正在按壁纸重新取色。");});
   commands.Register("fence.refresh","fence.refresh","重新读取桌面和分区文件夹",delegate(CommandArgs a){fences.Refresh();return CommandResult.Success("已刷新，桌面上有 "+fences.DesktopCount+" 项。");});
  }
  static List<string> CsvList(string v){return String.IsNullOrEmpty(v)?new List<string>():v.Split(new[]{',','，',';'},StringSplitOptions.RemoveEmptyEntries).Select(x=>x.Trim()).Where(x=>x.Length>0).ToList();}
@@ -78,6 +112,8 @@ public partial class MainWindow {
    trayFences.DropDownItems.Add("新建自由分区",null,delegate{Run("fence.add",new CommandArgs().Set("kind","free"));});
    trayFences.DropDownItems.Add("新建文件夹分区…",null,delegate{fences.AddFolderInteractive(null);});
    trayFences.DropDownItems.Add(new Forms.ToolStripSeparator());
+   bool dbl=fences.Store!=null&&fences.Store.DoubleClickHide;
+   trayFences.DropDownItems.Add(new Forms.ToolStripMenuItem("双击桌面空白处隐藏图标和分区",null,delegate{Run("desktop.double-click",new CommandArgs().Set("on",dbl?"off":"on"));}){Checked=dbl});
    bool unlocked=fences.Store!=null&&fences.Store.Unlocked;
    trayFences.DropDownItems.Add(unlocked?"锁定分区布局":"解锁分区布局",null,delegate{Run("fence.lock",new CommandArgs().Set("on",unlocked?"on":"off"));});
   };

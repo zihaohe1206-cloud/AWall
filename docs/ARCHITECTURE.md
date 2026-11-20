@@ -43,7 +43,18 @@ AWall 是给 Windows 桌面套上的一层：壁纸和桌面美化是两条产�
   - Explorer 重启后系统销毁了子窗口：用同一份内容重建窗口再挂载。
 
   重新挂载后，如果正处于接管状态，再隐藏一次系统图标。
-- **外观**：子窗口不能透明，所以分区是不透明的深色卡片，圆角用 `SetWindowRgn` 实现。按壁纸取色见路线图 5.3。
+- **外观**：子窗口不能透明，所以分区是不透明的深色卡片，圆角用 `SetWindowRgn` 实现。
+- **按壁纸取色**（`Features/Desktop/WallpaperPalette`）：
+  - 取色用的图片是每块屏当前显示的画面，依次尝试：静态 / 快照档的图片、动态播放器截一帧、素材预览图、Windows 系统壁纸（`WallpaperService.ThemeImageAsync`）。
+  - 把图片缩到 64×36，求平均色；再按色相分成 24 组，按饱和度 × 亮度加权，取权重最大的一组作为强调色。
+  - 卡片底色、边框、悬停色用平均色的色相，饱和度不超过 0.32，亮度固定在 0.13–0.24，所以壁纸再亮，卡片也保持深色，文字照样看得清。选中色和拖放提示用强调色。
+  - 何时取色：壁纸切换完成后 0.9 秒（新画面已经出来），或者某块屏上出现分区但还没有配色时。每个分区有自己的一套画刷，换色时用 `ColorAnimation` 在 0.7 秒内渐变。
+  - 同一块屏上的所有分区共用一套配色。
+- **干净桌面**（`SetClean`）：隐藏所有分区；如果当时系统图标还显示着，也一并隐藏。再切换一次就恢复，健康检查和刷新都不会把分区重新显示出来。Explorer 重启时退出干净桌面。
+- **双击**（`Platform/DesktopDoubleClick`）：
+  - `WH_MOUSE_LL` 钩子装在独立线程上，那个线程有自己的消息循环，AWall 界面卡住也不会拖慢鼠标。回调里只做计时（`DoubleClickDetector`，用系统的双击时间和范围）。
+  - 判断两次点击是否落在空白桌面，放到线程池里做（`DesktopHit`）：命中 Explorer 的 DefView / WorkerW / Progman，或者 AWall 自己的壁纸窗口，就算空白；命中 `SysListView32` 时再用 UI Automation 看是不是图标（`ListItem`），不往 Explorer 进程里写内存。点在分区或其他程序上，都不算空白。
+  - 设置项 `doubleClickHide` 存在 `fences.json`，默认开启；关掉时钩子也会卸载。
 - **开销**：只开分区时没有额外进程，自检测得 CPU 0.2–0.5%（3 秒采样）。文件变化由 `FileSystemWatcher` 通知，延迟 350 ms 合并后刷新。
 - **存盘**：`%LOCALAPPDATA%\AWall\fences.json`，坐标是相对所在显示器左上角的像素。显示器不在时分区隐藏，配置保留。
 
@@ -135,9 +146,9 @@ App ──► UI ──► Features ──► Render / Platform ──► Core
 |---|---|---|---|
 | App | `src/App` | 进程入口、单实例、路径、对外命令入口（`Program`、`AppPaths`、`CommandPipe`、`AWall.manifest`）；`src/Cli` 是单独编译的 `AWallCmd.exe` 入口 | 业务逻辑 |
 | Core | `src/Core` | 纯数据与规则：素材模型与扫描（`Item`、`LibraryScanner`、`WeImport`）、设置（`AppSettings`）、布局模型（`SavedLayout`）、命令总线（`CommandBus`） | 引用 UI、Render、Platform；调用 Windows 窗口 API |
-| Platform | `src/Platform` | Windows 相关能力：桌面宿主挂载（`DesktopHost`，含 `AboveIcons` 挂载与揭开）、图标显隐（`DesktopIcons`）、Shell 项目与右键菜单（`ShellItems`）、Win32 声明（`Native`）、系统壁纸（`SystemWallpaper`）、开机启动（`Autostart`）、锁屏（`LockScreen` + `Set-LockImage.ps1`）、系统静态背景截图（`StartupBackdrop`） | 引用 UI |
+| Platform | `src/Platform` | Windows 相关能力：桌面宿主挂载（`DesktopHost`，含 `AboveIcons` 挂载与揭开）、图标显隐（`DesktopIcons`）、Shell 项目与右键菜单（`ShellItems`）、双击空白桌面（`DesktopDoubleClick`）、Win32 声明（`Native`）、系统壁纸（`SystemWallpaper`）、开机启动（`Autostart`）、锁屏（`LockScreen` + `Set-LockImage.ps1`）、系统静态背景截图（`StartupBackdrop`） | 引用 UI |
 | Render | `src/Render` | 产生像素：WebView2 场景宿主（`ScenePlayer` + `scene/`）、mpv（`MpvPlayer`）、桌面播放窗口（`Player`）、切换遮罩（`TransitionCover`）、CDN 缓存（`WebCdn`） | 引用 UI |
-| Features | `src/Features` | 产品线：`Wallpaper`（播放控制器 `WallpaperService`：每屏计划、切换遮罩与回滚、PKG 同页切换、预热播放器、暂停规则、桌面恢复、轮播、布局保存；HTML 参数 `WebProperties`）、`Desktop`（层 / 块 / 场景模型、呈现策略、块窗口 `BlockWindow`、分区 `FenceService` / `FenceView` / `FenceModel`） | 引用 UI |
+| Features | `src/Features` | 产品线：`Wallpaper`（播放控制器 `WallpaperService`：每屏计划、切换遮罩与回滚、PKG 同页切换、预热播放器、暂停规则、桌面恢复、轮播、布局保存；HTML 参数 `WebProperties`）、`Desktop`（层 / 块 / 场景模型、呈现策略、块窗口 `BlockWindow`、分区 `FenceService` / `FenceView` / `FenceModel` / `WallpaperPalette`） | 引用 UI |
 | UI | `src/UI` | 展示和转发：主窗口（按关注点拆成 partial）、托盘、主题、参数窗口、导入窗口 | 自己实现业务规则；绕过命令表 |
 | Diagnostics | `src/Diagnostics` | 自检和性能测量（`PerfProbe`、`MainWindow.SelfTest`、`MainWindow.DesktopTest`、`MainWindow.FenceTest`） | 被正式功能依赖 |
 
@@ -179,6 +190,9 @@ App ──► UI ──► Features ──► Render / Platform ──► Core
 | `fence.add` | `kind=rule preset=<预设>`、`kind=rule title= [ext=] [keywords=] [days=]`、`kind=free [title=]` 或 `kind=folder folder= [title=]`，都可加 `[display=1..n]` | 新建分区；预设见 `fence.add` 的用法说明 |
 | `fence.remove` / `fence.set` | `id=`；`set` 可改 `title` `collapsed` `x` `y` `width` `height` | 删除（文件不动）/ 修改分区 |
 | `fence.lock` | `on=on\|off` | 锁定 / 解锁布局 |
+| `fence.theme` | | 按当前壁纸重新给分区取色 |
+| `desktop.clean` | `[on=on\|off]` | 干净桌面：隐藏 / 恢复图标和全部分区，不带参数时切换，等同双击桌面空白处 |
+| `desktop.double-click` | `on=on\|off` | 双击空白桌面隐藏的开关，默认开启 |
 
 `wallpaper.status` 的每块显示器带 `route`：`live` / `system-wallpaper` / `snapshot`。
 

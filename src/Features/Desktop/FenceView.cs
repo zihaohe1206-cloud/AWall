@@ -18,10 +18,19 @@ namespace AWall {
 // the shell menu, F2 renames in place, Delete recycles, drag out to any Explorer target, drag in to assign.
 public sealed class FenceView {
  public const string DragFormat="AWall.Fence";
- static readonly Brush Back=Frozen(0x1F,0x22,0x29),Line=Frozen(0x34,0x3A,0x46),Hover=Frozen(0x2C,0x31,0x3B),Selected=Frozen(0x33,0x49,0x6E),
-  Text=Frozen(0xF0,0xF2,0xF7),Muted=Frozen(0x9A,0xA3,0xB5),DropMark=Frozen(0x5E,0xA8,0xFF);
- static Brush Frozen(byte r,byte g,byte b){var x=new SolidColorBrush(Color.FromRgb(r,g,b));x.Freeze();return x;}
+ // Per-view brushes so the palette can follow the wallpaper with an animated transition (ApplyPalette).
+ readonly SolidColorBrush Back=new SolidColorBrush(),Line=new SolidColorBrush(),Hover=new SolidColorBrush(),Selected=new SolidColorBrush(),
+  Text=new SolidColorBrush(),Muted=new SolidColorBrush(),DropMark=new SolidColorBrush();
+ public FencePalette Palette {get;private set;}
  public const int TitleHeight=30; // DIP
+ public void ApplyPalette(FencePalette p,bool animate){
+  if(p==null)p=FencePalette.Default;Palette=p;
+  var pairs=new[]{Tuple.Create(Back,p.Back),Tuple.Create(Line,p.Line),Tuple.Create(Hover,p.Hover),Tuple.Create(Selected,p.Selected),Tuple.Create(Text,p.Text),Tuple.Create(Muted,p.Muted),Tuple.Create(DropMark,p.Accent)};
+  foreach(var x in pairs){
+   if(animate)x.Item1.BeginAnimation(SolidColorBrush.ColorProperty,new System.Windows.Media.Animation.ColorAnimation(x.Item2,new Duration(TimeSpan.FromMilliseconds(700))){EasingFunction=new System.Windows.Media.Animation.QuadraticEase()});
+   else{x.Item1.BeginAnimation(SolidColorBrush.ColorProperty,null);x.Item1.Color=x.Item2;}
+  }
+ }
 
  public readonly FenceConfig Config;
  public BlockWindow Window {get;private set;}
@@ -36,7 +45,7 @@ public sealed class FenceView {
  public bool Removed;
 
  public FenceView(FenceService owner,FenceConfig config){
-  service=owner;Config=config;
+  service=owner;Config=config;ApplyPalette(owner.PaletteFor(config.Display),false);
   title=new TextBlock(){Foreground=Text,FontSize=13,FontWeight=FontWeights.SemiBold,VerticalAlignment=VerticalAlignment.Center,TextTrimming=TextTrimming.CharacterEllipsis};
   count=new TextBlock(){Foreground=Muted,FontSize=12,VerticalAlignment=VerticalAlignment.Center,Margin=new Thickness(8,0,14,0)};
   chevron=new TextBlock(){Foreground=Muted,FontFamily=new FontFamily("Segoe MDL2 Assets"),FontSize=10,VerticalAlignment=VerticalAlignment.Center,Margin=new Thickness(10,0,8,0)};

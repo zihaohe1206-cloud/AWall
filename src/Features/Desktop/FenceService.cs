@@ -38,13 +38,49 @@ public sealed class FenceService {
  public IList<FenceView> Views {get {return views.Values.ToList();}}
  public FenceView View(string id){FenceView v;return views.TryGetValue(id,out v)?v:null;}
 
+ // ---- Palette per display (from its wallpaper; see WallpaperPalette)
+ readonly Dictionary<string,FencePalette> palettes=new Dictionary<string,FencePalette>(StringComparer.OrdinalIgnoreCase);
+ public FencePalette PaletteFor(string display){FencePalette p;return display!=null&&palettes.TryGetValue(display,out p)?p:FencePalette.Default;}
+ public bool HasPalette(string display){return display!=null&&palettes.ContainsKey(display);}
+ // Displays that show fences, i.e. whose wallpaper colours matter.
+ public IList<string> FenceDisplays {get {return views.Values.Select(v=>v.Config.Display).Where(x=>x!=null).Distinct(StringComparer.OrdinalIgnoreCase).ToList();}}
+ public void SetPalette(string display,FencePalette p,bool animate){
+  if(display==null||p==null)return;
+  FencePalette old;if(palettes.TryGetValue(display,out old)&&old.SameAs(p))return;
+  palettes[display]=p;
+  foreach(var v in views.Values)if(String.Equals(v.Config.Display,display,StringComparison.OrdinalIgnoreCase))v.ApplyPalette(p,animate);
+ }
+
+ // ---- Clean desktop: double-click on empty desktop hides the icons and every fence; again shows them.
+ public bool Clean {get;private set;}
+ bool cleanHidIcons;
+ DesktopDoubleClick doubleClick;
+ public bool DoubleClickRunning {get {return doubleClick!=null&&doubleClick.Running;}}
+ public void SetClean(bool on){
+  if(on==Clean||!started)return;Clean=on;
+  foreach(var v in views.Values)Place(v);
+  if(on){cleanHidIcons=!DesktopIcons.HiddenByAWall&&DesktopIcons.Visible&&DesktopIcons.SetVisible(false);}
+  else{if(cleanHidIcons&&!Store.Takeover)DesktopIcons.Restore();cleanHidIcons=false;}
+  Say(on?"已隐藏桌面图标和分区，再次双击桌面空白处恢复。":"已恢复桌面图标和分区。");Raise();
+ }
+ public void SetDoubleClickHide(bool on){Store.DoubleClickHide=on;Save();UpdateHook();Raise();}
+ void UpdateHook(){
+  bool want=started&&!stopping&&Store.DoubleClickHide;
+  if(want&&doubleClick==null){
+   doubleClick=new DesktopDoubleClick();
+   doubleClick.DoubleClicked+=delegate{dispatcher.BeginInvoke(new Action(delegate{SetClean(!Clean);}));};
+   try{doubleClick.Start();}catch(Exception e){doubleClick=null;Say("双击隐藏不可用："+e.Message);}
+  }else if(!want&&doubleClick!=null){doubleClick.Dispose();doubleClick=null;}
+ }
+
  public void Start(string storePath){
   if(started)return;started=true;
   Store=FenceStore.Load(storePath);
-  Rewatch();Refresh();health.Start();
+  Rewatch();Refresh();health.Start();UpdateHook();
  }
  public void Stop(){
-  if(!started)return;stopping=true;health.Stop();refreshTimer.Stop();
+  if(!started)return;stopping=true;health.Stop();refreshTimer.Stop();UpdateHook();
+  if(Clean){Clean=false;if(cleanHidIcons)DesktopIcons.Restore();cleanHidIcons=false;}
   foreach(var w in watchers)w.Dispose();watchers.Clear();
   foreach(var v in views.Values.ToList())v.Close();views.Clear();
   if(takeoverApplied)DesktopIcons.Restore();takeoverApplied=false;started=false;stopping=false;
@@ -107,7 +143,7 @@ public sealed class FenceService {
  }
  void Place(FenceView v){
   var b=Bounds(v.Config);
-  if(b.IsEmpty){if(v.Window.Handle!=IntPtr.Zero)v.Window.Hide();return;}// its display is not connected
+  if(b.IsEmpty||Clean){if(v.Window.Handle!=IntPtr.Zero&&v.Window.IsVisible)v.Window.Hide();return;}// display not connected, or clean desktop
   try{if(!v.Window.IsVisible&&v.Window.Handle!=IntPtr.Zero)v.Window.Show();v.Mount(b);}catch(Exception e){Say("分区挂到桌面失败，稍后重试："+e.Message);}
  }
 
@@ -249,7 +285,8 @@ public sealed class FenceService {
 
  // ---- Health: Explorer restarts destroy our child windows (their parent goes away).
  public void WindowLost(FenceView v){if(!stopping)dispatcher.BeginInvoke(new Action(Health));}
- public void ShellRestarted(){takeoverApplied=false;dispatcher.BeginInvoke(new Action(Health));}
+ // A new Explorer shows its icons again: leave clean mode so fences and icons agree.
+ public void ShellRestarted(){takeoverApplied=false;if(Clean){Clean=false;cleanHidIcons=false;Raise();}dispatcher.BeginInvoke(new Action(Health));}
  public void DisplaysChanged(){if(started)dispatcher.BeginInvoke(new Action(delegate{foreach(var v in views.Values)Place(v);}));}
  void Health(){
   if(!started||stopping)return;

@@ -61,6 +61,7 @@ public sealed class FenceConfig {
 public sealed class FenceStore {
  public List<FenceConfig> Fences=new List<FenceConfig>();
  public bool Unlocked; // layout editing allowed (move / resize); locked by default
+ public bool DoubleClickHide=true; // double-click on empty desktop hides icons and fences
  public string Path;
  public FenceConfig Find(string id){return Fences.FirstOrDefault(x=>String.Equals(x.Id,id,StringComparison.OrdinalIgnoreCase));}
  public FenceConfig Other {get {return Fences.FirstOrDefault(x=>x.Kind=="other");}}
@@ -74,6 +75,7 @@ public sealed class FenceStore {
    var j=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(File.ReadAllText(path));
    if(j==null)return store;
    object v;store.Unlocked=j.TryGetValue("unlocked",out v)&&v is bool&&(bool)v;
+   if(j.TryGetValue("doubleClickHide",out v)&&v is bool)store.DoubleClickHide=(bool)v;
    var list=j.TryGetValue("fences",out v)?v as ArrayList:null;
    if(list!=null)foreach(var o in list){
     var d=o as Dictionary<string,object>;if(d==null)continue;
@@ -97,7 +99,7 @@ public sealed class FenceStore {
    {"rule",new Dictionary<string,object>{{"ext",f.Rule.Extensions},{"keywords",f.Rule.Keywords},{"days",f.Rule.Days}}}}).ToList();
   Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path));
   string temp=Path+".tmp";
-  File.WriteAllText(temp,new JavaScriptSerializer().Serialize(new Dictionary<string,object>{{"version",1},{"unlocked",Unlocked},{"fences",list}}));
+  File.WriteAllText(temp,new JavaScriptSerializer().Serialize(new Dictionary<string,object>{{"version",1},{"unlocked",Unlocked},{"doubleClickHide",DoubleClickHide},{"fences",list}}));
   if(File.Exists(Path))File.Replace(temp,Path,null);else File.Move(temp,Path);
  }
  static string Str(Dictionary<string,object> d,string k){object v;return d.TryGetValue(k,out v)&&v!=null?Convert.ToString(v):null;}
